@@ -1,5 +1,5 @@
 [project]
-name = "flood-detection-dl"
+name = "flood-detection-core"
 version = "0.1.0"
 description = "Flood Detection Core"
 readme = "README.md"
