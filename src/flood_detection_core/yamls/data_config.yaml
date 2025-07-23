@@ -1,0 +1,16 @@
+# use absolute path if possible
+# if use relative path, the path will be resolved based on where the python config parser is run
+relative_to: .
+
+gee:
+  data_dir: "./data/ee"
+
+hand_labeled_sen1flood11:
+  data_dir: "./data/sen1flood11/v1.1"
+  metadata: "Sen1Floods11_Metadata.geojson"
+  catalog_source: "catalog/sen1floods11_hand_labeled_source"
+  catalog_label: "catalog/sen1floods11_hand_labeled_label"
+  permanent_water: "data/flood_events/HandLabeled/JRCWaterHand"
+  ground_truth: "data/flood_events/HandLabeled/LabelHand"
+  post_flood_s1: "data/flood_events/HandLabeled/S1Hand"
+  post_flood_s2: "data/flood_events/HandLabeled/S2Hand"

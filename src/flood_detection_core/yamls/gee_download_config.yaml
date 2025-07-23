@@ -1,0 +1,29 @@
+debug: false
+
+target: "all"
+
+output:
+  format: "geotiff"
+  max_dimension: 512
+
+flood_sites:
+  num_pre_images: 8
+  days_before_flood_max: 120
+  days_before_flood_min: 14
+
+
+pretrain:
+  num_patches: 100
+  num_images: 4
+
+patches:
+  create_patches: false
+  patch_size: 16
+  patch_stride: 16
+
+preprocessing:
+  vv_clip_lower_bound: -23
+  vv_clip_upper_bound: 0
+  vh_clip_lower_bound: -28
+  vh_clip_upper_bound: -5
+
