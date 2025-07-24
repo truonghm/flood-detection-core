@@ -21,6 +21,7 @@ dependencies = [
     "scikit-image>=0.25.2",
     "scikit-learn>=1.7.1",
     "typer>=0.16.0",
+    "torch>=2.7.0",
 ]
 
 [build-system]
@@ -30,3 +31,11 @@ build-backend = "uv_build"
 [tool.uv.build-backend]
 module-name = "flood_detection_core"
 module-root = "src"
+
+[project.scripts]
+flood_detection_core = "flood_detection_core.__main__:app"
+
+[[tool.uv.index]]
+name = "pytorch-cu126"
+url = "https://download.pytorch.org/whl/cu126"
+explicit = true

@@ -1,6 +1,7 @@
 from typing import Annotated
 
 import typer
+from rich import print
 
 app = typer.Typer()
 
@@ -43,11 +44,46 @@ def eda(
         speckle_filtering_pixel_size=speckle_filtering_pixel_size,
     )
 
-@app.command()
-def download_gee():
-    print("Not yet implemented")
-    typer.Exit()
 
+@app.command()
+def dl_gee_sen1flood11(
+    data_config_path: Annotated[str, typer.Option("--data-config-path")],
+    download_config_path: Annotated[str, typer.Option("--download-config-path")],
+    gcp_project_id: Annotated[str | None, typer.Option("--gcp-project-id")] = None,
+):
+    import os
+
+    from flood_detection_core.config import DataConfig, Sen1Flood11GeeDownloadConfig
+    from flood_detection_core.data.downloaders.gee_downloader import SitePrefloodDataDownloader
+    from flood_detection_core.utils import authenticate_gee
+
+    if not gcp_project_id:
+        gcp_project_id = os.getenv("GCP_PROJECT_ID")
+    authenticate_gee(gcp_project_id)
+    download_config = Sen1Flood11GeeDownloadConfig(_yaml_file=download_config_path)
+    data_config = DataConfig(_yaml_file=data_config_path)
+    downloader = SitePrefloodDataDownloader(download_config, data_config)
+    downloader()
+
+@app.command()
+def dl_gee_sen1flood11_pretrain(
+    data_config_path: Annotated[str, typer.Option("--data-config-path")],
+    download_config_path: Annotated[str, typer.Option("--download-config-path")],
+    gcp_project_id: Annotated[str | None, typer.Option("--gcp-project-id")] = None,
+):
+    import os
+
+    from flood_detection_core.config import DataConfig, Sen1Flood11GeeDownloadConfig
+    from flood_detection_core.data.downloaders.gee_downloader import PreTrainDataDownloader
+    from flood_detection_core.utils import authenticate_gee
+
+    if not gcp_project_id:
+        gcp_project_id = os.getenv("GCP_PROJECT_ID")
+    authenticate_gee(gcp_project_id)
+    download_config = Sen1Flood11GeeDownloadConfig(_yaml_file=download_config_path)
+    data_config = DataConfig(_yaml_file=data_config_path)
+    downloader = PreTrainDataDownloader(download_config, data_config)
+    downloader()
 
 if __name__ == "__main__":
     app()
