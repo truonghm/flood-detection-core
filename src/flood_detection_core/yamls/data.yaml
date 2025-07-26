@@ -4,6 +4,8 @@ relative_to: .
 
 gee:
   data_dir: "./data/ee"
+  pre_flood_dir: "pre_flood"
+  pretrain_dir: "pretrain"
 
 hand_labeled_sen1flood11:
   data_dir: "./data/sen1flood11/v1.1"

@@ -137,7 +137,7 @@ class TifRawLoader:
             print(f"Loading pre-flood data for [bold green]{date_str}[/bold green]")
             reverse_idx = len(dates) - idx - 1
             expected_file_name = f"pre_flood_{reverse_idx + 1}_{date_str}.tif"
-            expected_file_path = self.data_config.gee.data_dir / site_name / tile_name / expected_file_name
+            expected_file_path = self.data_config.gee.pre_flood_dir / site_name / tile_name / expected_file_name
             if expected_file_path.exists():
                 load_result = load_dual_band_tif(expected_file_path, date=date)
                 pre_flood_data.append(load_result)

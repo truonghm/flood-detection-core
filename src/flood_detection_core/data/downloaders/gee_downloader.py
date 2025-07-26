@@ -1,7 +1,6 @@
 import datetime
 import json
 import os
-import random
 from pathlib import Path
 from typing import Any, Literal
 
@@ -10,7 +9,6 @@ import geemap
 import numpy as np
 import requests
 from rich import print
-from rich.progress import track
 
 from flood_detection_core.config import (
     DataConfig,
@@ -19,10 +17,8 @@ from flood_detection_core.config import (
 )
 from flood_detection_core.data.metadata.sen1flood11 import (
     PerSiteTilesMetadata,
-    Sen1Flood11SiteMetadata,
     load_sen1flood11_metadata,
 )
-from flood_detection_core.data.utils import create_patches_from_array
 
 
 class GEEDownloader:
@@ -170,9 +166,6 @@ class SitePrefloodDataDownloader(GEEDownloader):
         days_before_flood_min: int = 5,
         download_format: Literal["numpy", "geotiff"] = "numpy",
         max_dimension: int = 512,
-        create_patches: bool = False,
-        patch_size: int = 16,
-        patch_stride: int = 16,
         enable_debug: bool = False,
     ) -> None:
         site_dir = output_dir / site_name
@@ -277,17 +270,6 @@ class SitePrefloodDataDownloader(GEEDownloader):
                     if success:
                         downloaded_dates.append(pre_date)
                         print(f"      Downloaded pre-flood image {i + 1}/{actual_count}: {pre_date}")
-
-                        if create_patches and download_format == "numpy":
-                            try:
-                                data = np.load(filename)
-                                print(f"      Image shape: {data.shape} (should be close to 512x512x2)")
-                                patches_array = create_patches_from_array(data, patch_size, patch_stride)
-                                patch_filename = filename.replace(".npy", "_patches.npy")
-                                np.save(patch_filename, patches_array)
-                                print(f"      Created {patches_array.shape[0]} patches")
-                            except Exception as e:
-                                print(f"      Error creating patches: {e}")
                     else:
                         print(f"      Failed to download pre-flood image {i + 1}")
 
@@ -360,9 +342,6 @@ class SitePrefloodDataDownloader(GEEDownloader):
         days_before_flood_min: int = 5,
         download_format: Literal["numpy", "geotiff"] = "numpy",
         max_dimension: int = 4000,
-        create_patches: bool = False,
-        patch_size: int = 16,
-        patch_stride: int = 16,
         enable_debug: bool = False,
     ) -> None:
         for site_name in self.sen1flood11_metadata.keys():
@@ -376,9 +355,6 @@ class SitePrefloodDataDownloader(GEEDownloader):
                 num_pre_images=num_pre_images,
                 download_format=download_format,
                 max_dimension=max_dimension,
-                create_patches=create_patches,
-                patch_size=patch_size,
-                patch_stride=patch_stride,
                 enable_debug=enable_debug,
             )
 
@@ -393,7 +369,7 @@ class SitePrefloodDataDownloader(GEEDownloader):
         )
         if self.download_config.target == "all":
             return self.download_all(
-                output_dir=self.data_config.gee.data_dir,
+                output_dir=self.data_config.gee.pre_flood_dir,
                 vv_clipped_range=vv_clipped_range,
                 vh_clipped_range=vh_clipped_range,
                 num_pre_images=self.download_config.flood_sites.num_pre_images,
@@ -401,15 +377,12 @@ class SitePrefloodDataDownloader(GEEDownloader):
                 days_before_flood_min=self.download_config.flood_sites.days_before_flood_min,
                 download_format=self.download_config.output.format,
                 max_dimension=self.download_config.output.max_dimension,
-                create_patches=self.download_config.patches.create_patches,
-                patch_size=self.download_config.patches.patch_size,
-                patch_stride=self.download_config.patches.patch_stride,
                 enable_debug=self.download_config.debug,
             )
 
         return self.download_site(
             site_name=self.download_config.target,
-            output_dir=self.data_config.gee.data_dir,
+            output_dir=self.data_config.gee.pre_flood_dir,
             vv_clipped_range=vv_clipped_range,
             vh_clipped_range=vh_clipped_range,
             num_pre_images=self.download_config.flood_sites.num_pre_images,
@@ -417,306 +390,6 @@ class SitePrefloodDataDownloader(GEEDownloader):
             days_before_flood_min=self.download_config.flood_sites.days_before_flood_min,
             download_format=self.download_config.output.format,
             max_dimension=self.download_config.output.max_dimension,
-            create_patches=self.download_config.patches.create_patches,
-            patch_size=self.download_config.patches.patch_size,
-            patch_stride=self.download_config.patches.patch_stride,
-            enable_debug=self.download_config.debug,
-        )
-
-
-class PreTrainDataDownloader(GEEDownloader):
-    @staticmethod
-    def get_random_patches_for_pretraining(
-        sites_metadata: dict[str, Sen1Flood11SiteMetadata], num_patches: int
-    ) -> list[tuple[ee.Geometry, str, str, int]]:
-        """
-        Generate random patches from flood sites for pre-training
-
-        Args:
-            sites_metadata: Dictionary of site metadata
-            num_patches: Number of random patches to generate
-
-        Returns:
-            List of (aoi, site_name, orbit_pass, relative_orbit) tuples
-        """
-        patches = []
-
-        for i in range(num_patches):
-            # Randomly select a site
-            site_name = random.choice(list(sites_metadata.keys()))
-            site_info = sites_metadata[site_name]
-
-            # Get site bounds
-            min_lon, min_lat, max_lon, max_lat = site_info.bbox
-
-            # Generate random patch within site bounds (use smaller patch for variation)
-            patch_size_deg = 0.01  # Approximately 1km at equator
-
-            if (max_lon - min_lon) < patch_size_deg or (max_lat - min_lat) < patch_size_deg:
-                # If site is too small, use the entire site
-                patch_aoi = ee.Geometry.Rectangle([min_lon, min_lat, max_lon, max_lat])
-            else:
-                # Generate random patch
-                patch_min_lon = random.uniform(min_lon, max_lon - patch_size_deg)
-                patch_min_lat = random.uniform(min_lat, max_lat - patch_size_deg)
-                patch_max_lon = patch_min_lon + patch_size_deg
-                patch_max_lat = patch_min_lat + patch_size_deg
-
-                patch_aoi = ee.Geometry.Rectangle([patch_min_lon, patch_min_lat, patch_max_lon, patch_max_lat])
-
-            patches.append((patch_aoi, site_name, site_info.orbit_pass, site_info.relative_orbit))
-
-        return patches
-
-    def get_random_patches_from_tiles(self, num_patches: int) -> list[tuple[ee.Geometry, str, str, int]]:
-        """
-        Generate random patches using individual tile bboxes for more precise patch generation
-
-        This approach matches the CLVAE paper methodology:
-        - Paper uses 512×512 pixel tiles as basic data units
-        - Generates "100 random patches + 4 pre-flood images each for pre-training"
-        - Final model processes 16×16×2 patches extracted from these larger patches
-
-        Advantages over site-level bboxes:
-        1. Tiles are the actual data units (512×512 pixels each)
-        2. Each tile has a precise bbox that corresponds to real SAR data
-        3. Avoids generating patches in areas without data
-        4. Matches the paper's data collection methodology
-
-        Args:
-            num_patches: Number of random patches to generate (paper uses 100)
-
-        Returns:
-            List of (aoi, site_name, orbit_pass, relative_orbit) tuples
-        """
-        patches = []
-
-        # Get all available tiles from all sites
-        all_tiles = []
-        for site_name, site_info in self.sen1flood11_metadata.items():
-            try:
-                tiles_metadata = PerSiteTilesMetadata.from_json(
-                    self.data_config.hand_labeled_sen1flood11.catalog_source,
-                    site_name,
-                )
-                for tile_id, tile_data in tiles_metadata.tiles.items():
-                    all_tiles.append(
-                        (
-                            tile_data.bbox,  # [min_lon, min_lat, max_lon, max_lat]
-                            site_name,
-                            site_info.orbit_pass,
-                            site_info.relative_orbit,
-                            tile_id,
-                        )
-                    )
-            except Exception as e:
-                print(f"Warning: Could not load tiles for site {site_name}: {e}")
-                continue
-
-        if not all_tiles:
-            raise ValueError("No tiles found for patch generation")
-
-        print(f"Found {len(all_tiles)} total tiles across all sites for patch generation")
-
-        for i in track(range(num_patches), description="Generating patches..."):
-            # Randomly select a tile
-            tile_bbox, site_name, orbit_pass, relative_orbit, tile_id = random.choice(all_tiles)
-            min_lon, min_lat, max_lon, max_lat = tile_bbox
-
-            # Calculate patch size based on tile dimensions
-            tile_width = max_lon - min_lon
-            tile_height = max_lat - min_lat
-
-            # Use smaller patches within tiles for variation
-            # CLVAE paper processes 16×16 patches from larger tiles
-            # So we create patches that are ~1/4 to 1/2 the tile size for diversity
-            patch_width = tile_width * random.uniform(0.25, 0.5)
-            patch_height = tile_height * random.uniform(0.25, 0.5)
-
-            if patch_width >= tile_width * 0.9 or patch_height >= tile_height * 0.9:
-                # If calculated patch is close to tile size, use the entire tile
-                patch_aoi = ee.Geometry.Rectangle([min_lon, min_lat, max_lon, max_lat])
-                # patch_info = f"tile_{tile_id}_full"
-            else:
-                # Generate random patch within tile bounds
-                max_offset_lon = tile_width - patch_width
-                max_offset_lat = tile_height - patch_height
-
-                offset_lon = random.uniform(0, max_offset_lon)
-                offset_lat = random.uniform(0, max_offset_lat)
-
-                patch_min_lon = min_lon + offset_lon
-                patch_min_lat = min_lat + offset_lat
-                patch_max_lon = patch_min_lon + patch_width
-                patch_max_lat = patch_min_lat + patch_height
-
-                patch_aoi = ee.Geometry.Rectangle([patch_min_lon, patch_min_lat, patch_max_lon, patch_max_lat])
-                # patch_info = f"tile_{tile_id}_patch"
-
-            patches.append((patch_aoi, site_name, orbit_pass, relative_orbit))
-        return patches
-
-    def get_date_range(self) -> tuple[str, str]:
-        all_dates = []
-        for site_info in self.sen1flood11_metadata.values():
-            date = datetime.datetime.strptime(site_info.post_flood_date, "%Y-%m-%d")
-            all_dates.append(date)
-        min_date = min(all_dates)
-        min_year = min_date.year
-
-        patch_year = min_year - 1
-        patch_start_date = f"{patch_year}-01-01"
-        patch_end_date = f"{patch_year}-12-31"
-        return patch_start_date, patch_end_date
-
-    def download(
-        self,
-        output_dir: Path,
-        vv_clipped_range: tuple[float, float],
-        vh_clipped_range: tuple[float, float],
-        num_patches: int = 100,  # CLVAE paper uses 100 random patches
-        num_images: int = 4,  # CLVAE paper uses 4 pre-flood images per patch
-        download_format: Literal["numpy", "geotiff"] = "numpy",
-        max_dimension: int = 512,
-        create_patches: bool = False,
-        patch_size: int = 16,  # CLVAE paper uses 16×16 patches
-        patch_stride: int = 16,
-        enable_debug: bool = False,
-    ) -> None:
-        """
-        Download pre-training data following CLVAE paper methodology
-
-        CLVAE approach:
-        - 100 random patches for pre-training
-        - 4 pre-flood images per patch
-        - Images from 2017 (well before 2018-2019 flood events)
-        - VV clipping: (-23, 0) dB, VH clipping: (-28, -5) dB
-        - Final processing creates 16×16×2 patches for model input
-
-        Args:
-            num_patches: Number of spatial patches (default 100, matches paper)
-            num_images: Pre-flood images per patch (default 4, matches paper)
-            patch_size: Size for creating sub-patches (default 16, matches paper)
-            Other args: Standard download configuration
-        """
-        pretrain_dir = output_dir / "pretrain"
-        pretrain_dir.mkdir(parents=True, exist_ok=True)
-
-        print(f"Downloading pre-training data: {num_patches} patches with {num_images} images each")
-        start_date, end_date = self.get_date_range()
-        print(f"Using temporal data from {start_date} to {end_date}")
-        # Generate random patches using tile-level approach (matches CLVAE methodology)
-        patches = self.get_random_patches_from_tiles(num_patches)
-
-        successful_downloads = 0
-
-        for i, (patch_aoi, site_name, orbit_pass, relative_orbit) in enumerate(
-            track(patches, description="Downloading patches...")
-        ):
-            print(f"Processing patch {i + 1}/{num_patches} from {site_name}")
-
-            # Get pre-flood collection
-            try:
-                pre_flood_collection = self.get_s1_collection(
-                    patch_aoi, start_date, end_date, orbit_pass, relative_orbit
-                )
-
-                collection_size = pre_flood_collection.size().getInfo()
-                if collection_size < num_images:
-                    print(f"  Skipping patch {i + 1}: only {collection_size} images available, need {num_images}")
-                    continue
-
-                # Get the most recent images (following CLVAE temporal selection)
-                pre_flood_images = pre_flood_collection.sort("system:time_start", False).limit(num_images)
-                preprocessed_images = pre_flood_images.map(
-                    lambda x: self.preprocess_s1_image(
-                        x,
-                        vv_clipped_range=vv_clipped_range,
-                        vh_clipped_range=vh_clipped_range,
-                    )
-                )
-
-                # Download images for this patch
-                patch_dir = os.path.join(pretrain_dir, f"patch_{i + 1:03d}")
-                os.makedirs(patch_dir, exist_ok=True)
-
-                pre_flood_list = preprocessed_images.toList(num_images)
-                patch_success = True
-
-                for j in range(num_images):
-                    pre_image = ee.Image(pre_flood_list.get(j))
-                    pre_date = ee.Date(pre_image.get("system:time_start")).format("YYYY-MM-dd").getInfo()
-
-                    if download_format == "numpy":
-                        filename = os.path.join(patch_dir, f"pre_flood_{j + 1}_{pre_date}.npy")
-                        success = self.to_numpy(
-                            image=pre_image,
-                            aoi=patch_aoi,
-                            filename=filename,
-                            dimensions=max_dimension,
-                            enable_debug=enable_debug,
-                        )
-                    else:
-                        filename = os.path.join(patch_dir, f"pre_flood_{j + 1}_{pre_date}.tif")
-                        success = self.to_geotiff(
-                            image=pre_image,
-                            aoi=patch_aoi,
-                            filename=filename,
-                            dimensions=max_dimension,
-                            enable_debug=enable_debug,
-                        )
-
-                    if not success:
-                        patch_success = False
-                        break
-
-                    # Create 16×16 patches if requested (matches CLVAE model input)
-                    if create_patches and download_format == "numpy":
-                        try:
-                            data = np.load(filename)
-                            patches_array = create_patches_from_array(data, patch_size, patch_stride)
-                            patch_filename = filename.replace(".npy", "_patches.npy")
-                            np.save(patch_filename, patches_array)
-                            print(
-                                f"    Created {patches_array.shape[0]} {patch_size}×{patch_size} patches from {filename}"
-                            )
-                        except Exception as e:
-                            print(f"    Error creating patches from {filename}: {e}")
-
-                if patch_success:
-                    successful_downloads += 1
-                    print(f"  Successfully downloaded patch {i + 1}")
-                else:
-                    print(f"  Failed to download patch {i + 1}")
-
-            except Exception as e:
-                print(f"  Error processing patch {i + 1}: {e}")
-                if enable_debug:
-                    raise e
-
-        print(f"Pre-training data download completed: {successful_downloads}/{num_patches} patches successful")
-        print(f"Ready for pre-training: {successful_downloads * num_images} total images")
-
-    def __call__(self) -> Any:
-        vv_clipped_range = (
-            self.download_config.preprocessing.vv_clip_lower_bound,
-            self.download_config.preprocessing.vv_clip_upper_bound,
-        )
-        vh_clipped_range = (
-            self.download_config.preprocessing.vh_clip_lower_bound,
-            self.download_config.preprocessing.vh_clip_upper_bound,
-        )
-        return self.download(
-            output_dir=self.data_config.gee.data_dir,
-            vv_clipped_range=vv_clipped_range,
-            vh_clipped_range=vh_clipped_range,
-            num_patches=self.download_config.pretrain.num_patches,
-            num_images=self.download_config.pretrain.num_images,
-            download_format=self.download_config.output.format,
-            max_dimension=self.download_config.output.max_dimension,
-            create_patches=self.download_config.patches.create_patches,
-            patch_size=self.download_config.patches.patch_size,
-            patch_stride=self.download_config.patches.patch_stride,
             enable_debug=self.download_config.debug,
         )
 

@@ -5,8 +5,9 @@ from pydantic import BaseModel, Field, model_validator
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict, YamlConfigSettingsSource
 from rich import print
 
-gee_download_config_path = Path(__file__).parent / "yamls/gee_download_config.yaml"
-data_config_path = Path(__file__).parent / "yamls/data_config.yaml"
+gee_download_config_path = Path(__file__).parent / "yamls/gee.yaml"
+data_config_path = Path(__file__).parent / "yamls/data.yaml"
+model_config_path = Path(__file__).parent / "yamls/model_clvae.yaml"
 
 
 class OutputConfig(BaseModel):
@@ -18,17 +19,6 @@ class FloodSitesConfig(BaseModel):
     num_pre_images: int = 8
     days_before_flood_max: int = 120
     days_before_flood_min: int = 5
-
-
-class PreTrainConfig(BaseModel):
-    num_patches: int = 100
-    num_images: int = 4
-
-
-class PatchesConfig(BaseModel):
-    create_patches: bool = False
-    patch_size: int = 16
-    patch_stride: int = 16
 
 
 class PreprocessingConfig(BaseModel):
@@ -46,8 +36,6 @@ class Sen1Flood11GeeDownloadConfig(GEEDownloadConfig):
     target: str | Literal["all", "pretrain"]
     output: OutputConfig
     flood_sites: FloodSitesConfig
-    pretrain: PreTrainConfig
-    patches: PatchesConfig
     preprocessing: PreprocessingConfig
 
     model_config = SettingsConfigDict(yaml_file=gee_download_config_path)
@@ -69,14 +57,28 @@ class DataDirConfig(BaseModel):
 
 
 class GEEDataConfig(DataDirConfig):
+    pre_flood_dir: str | Path
+    pretrain_dir: str | Path
+
+    def get_pretrain_metadata_path(self) -> Path:
+        return self.pretrain_dir / "metadata.json"
+
+    def get_pretrain_data_paths(self, patch_id: str | None = None) -> list[Path]:
+        if patch_id is None:
+            return list((self.pretrain_dir).glob("patch_*/*.tif"))
+        return list((self.pretrain_dir / patch_id).glob("*.tif"))
+
     def get_pre_flood_tile_paths(self, site_name: str, tile_name: str) -> list[Path]:
-        return list(self.data_dir.glob(f"{site_name}/{tile_name}/*.tif"))
+        return list(self.pre_flood_dir.glob(f"{site_name}/{tile_name}/*.tif"))
 
     def get_pre_flood_site_paths(self, site_name: str) -> list[Path]:
-        return list(self.data_dir.glob(f"{site_name}/{site_name.capitalize()}_/*.tif"))
+        return list(self.pre_flood_dir.glob(f"{site_name}/{site_name.capitalize()}_/*.tif"))
+
+    def get_all_pre_flood_tiles_paths(self) -> list[Path]:
+        return list(self.pre_flood_dir.glob("*/*/*.tif"))
 
     def get_pre_flood_site_metadata_path(self, site_name: str) -> Path:
-        return self.data_dir / site_name / "overall_metadata.json"
+        return self.pre_flood_dir / site_name / "overall_metadata.json"
 
 
 class Sen1Flood11HandLabeledDataConfig(DataDirConfig):
@@ -160,20 +162,41 @@ class DataConfig(BaseSettings):
                     if data_dir is not None:
                         # Convert data_dir to root_path / data_dir
                         data_dir_path = root_path / data_dir
-                        if not data_dir_path.exists():
-                            raise ValueError(f"Data directory {data_dir_path} does not exist")
                         config_values["data_dir"] = data_dir_path
 
                         # For all other fields in the config, make them root_path / data_dir / field_value
                         for field_name, field_value in config_values.items():
                             if field_name != "data_dir" and field_value is not None:
-                                if not (data_dir_path / field_value).exists():
-                                    raise ValueError(f"Path {data_dir_path / field_value} does not exist")
                                 config_values[field_name] = data_dir_path / field_value
 
         return values
 
     model_config = SettingsConfigDict(yaml_file=data_config_path)
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        return (YamlConfigSettingsSource(settings_cls),)
+
+
+class CLVAEPretrainConfig(BaseModel):
+    num_patches: int = 100
+    num_temporal_length: int = 4
+    patch_size: int = 16
+    patch_stride: int = 16
+    replacement: bool = False
+
+
+class CLVAEConfig(BaseSettings):
+    pretrain: CLVAEPretrainConfig
+
+    model_config = SettingsConfigDict(yaml_file=model_config_path)
 
     @classmethod
     def settings_customise_sources(

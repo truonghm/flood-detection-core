@@ -1,9 +1,10 @@
+from pathlib import Path
+
 import numpy as np
+import rasterio
 
 
-def create_patches_from_array(
-    image_array: np.ndarray, patch_size: int = 16, stride: int = 16
-) -> np.ndarray:
+def create_patches_from_array(image_array: np.ndarray, patch_size: int = 16, stride: int = 16) -> np.ndarray:
     """Create patches from an image array"""
     if len(image_array.shape) != 3:
         raise ValueError(f"Expected 3D array, got {len(image_array.shape)}D")
@@ -27,3 +28,13 @@ def create_patches_from_array(
             patches.append(patch)
 
     return np.array(patches)
+
+
+def create_patches_from_tif(
+    tif_path: Path,
+    patch_size: int = 16,
+    stride: int = 16,
+) -> np.ndarray:
+    with rasterio.open(tif_path) as src:
+        image_array = src.read()
+        return create_patches_from_array(image_array, patch_size, stride)

@@ -1,0 +1,5 @@
+pretrain:
+  num_patches: 100
+  num_temporal_length: 4
+  patch_size: 16
+  patch_stride: 16
