@@ -1,13 +1,25 @@
 from pathlib import Path
 from typing import Literal
 
+import yaml
 from pydantic import BaseModel, Field, model_validator
-from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict, YamlConfigSettingsSource
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from rich import print
 
 gee_download_config_path = Path(__file__).parent / "yamls/gee.yaml"
 data_config_path = Path(__file__).parent / "yamls/data.yaml"
 model_config_path = Path(__file__).parent / "yamls/model_clvae.yaml"
+
+
+class BaseSettingsWithYaml(BaseSettings):
+    @classmethod
+    def from_yaml(cls, yaml_file: Path):
+        return cls.model_validate(cls._load_yaml(yaml_file))
+
+    @classmethod
+    def _load_yaml(cls, yaml_file: Path):
+        with open(yaml_file) as f:
+            return yaml.safe_load(f)
 
 
 class OutputConfig(BaseModel):
@@ -28,7 +40,7 @@ class PreprocessingConfig(BaseModel):
     vh_clip_upper_bound: float = -5
 
 
-class GEEDownloadConfig(BaseSettings): ...
+class GEEDownloadConfig(BaseSettingsWithYaml): ...
 
 
 class Sen1Flood11GeeDownloadConfig(GEEDownloadConfig):
@@ -39,17 +51,6 @@ class Sen1Flood11GeeDownloadConfig(GEEDownloadConfig):
     preprocessing: PreprocessingConfig
 
     model_config = SettingsConfigDict(yaml_file=gee_download_config_path)
-
-    @classmethod
-    def settings_customise_sources(
-        cls,
-        settings_cls: type[BaseSettings],
-        init_settings: PydanticBaseSettingsSource,
-        env_settings: PydanticBaseSettingsSource,
-        dotenv_settings: PydanticBaseSettingsSource,
-        file_secret_settings: PydanticBaseSettingsSource,
-    ) -> tuple[PydanticBaseSettingsSource, ...]:
-        return (YamlConfigSettingsSource(settings_cls),)
 
 
 class DataDirConfig(BaseModel):
@@ -139,7 +140,7 @@ class Sen1Flood11HandLabeledDataConfig(DataDirConfig):
         return list(self.post_flood_s2.glob(f"{tile_pattern}.tif"))
 
 
-class DataConfig(BaseSettings):
+class DataConfig(BaseSettingsWithYaml):
     relative_to: str | Path = Field(default=".", description="The relative path to the root of the project")
     gee: GEEDataConfig
     hand_labeled_sen1flood11: Sen1Flood11HandLabeledDataConfig
@@ -173,17 +174,6 @@ class DataConfig(BaseSettings):
 
     model_config = SettingsConfigDict(yaml_file=data_config_path)
 
-    @classmethod
-    def settings_customise_sources(
-        cls,
-        settings_cls: type[BaseSettings],
-        init_settings: PydanticBaseSettingsSource,
-        env_settings: PydanticBaseSettingsSource,
-        dotenv_settings: PydanticBaseSettingsSource,
-        file_secret_settings: PydanticBaseSettingsSource,
-    ) -> tuple[PydanticBaseSettingsSource, ...]:
-        return (YamlConfigSettingsSource(settings_cls),)
-
 
 class CLVAEPretrainConfig(BaseModel):
     num_patches: int = 100
@@ -193,26 +183,33 @@ class CLVAEPretrainConfig(BaseModel):
     replacement: bool = False
 
 
-class CLVAEConfig(BaseSettings):
+class GeometricAugmentationConfig(BaseModel):
+    left_right: float = 0.5
+    up_down: float = 0.2
+    rotate: tuple[float, float] = (-90, 90)
+
+
+class NonGeometricAugmentationConfig(BaseModel):
+    gaussian_blur: float = 0.3
+    gamma_contrast_prob: float = 0.5
+    gamma_contrast: tuple[float, float] = (0.25, 2.0)
+
+
+class AugmentationConfig(BaseModel):
+    geometric: GeometricAugmentationConfig
+    non_geometric: NonGeometricAugmentationConfig
+
+
+class CLVAEConfig(BaseSettingsWithYaml):
     pretrain: CLVAEPretrainConfig
+    augmentation: AugmentationConfig
 
     model_config = SettingsConfigDict(yaml_file=model_config_path)
 
-    @classmethod
-    def settings_customise_sources(
-        cls,
-        settings_cls: type[BaseSettings],
-        init_settings: PydanticBaseSettingsSource,
-        env_settings: PydanticBaseSettingsSource,
-        dotenv_settings: PydanticBaseSettingsSource,
-        file_secret_settings: PydanticBaseSettingsSource,
-    ) -> tuple[PydanticBaseSettingsSource, ...]:
-        return (YamlConfigSettingsSource(settings_cls),)
-
 
 if __name__ == "__main__":
-    download_config = Sen1Flood11GeeDownloadConfig(_yaml_file=gee_download_config_path)
+    download_config = Sen1Flood11GeeDownloadConfig.from_yaml(gee_download_config_path)
     print(download_config)
 
-    data_config = DataConfig(_yaml_file=data_config_path)
+    data_config = DataConfig.from_yaml(data_config_path)
     print(data_config)

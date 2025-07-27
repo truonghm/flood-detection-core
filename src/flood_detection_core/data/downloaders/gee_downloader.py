@@ -399,9 +399,9 @@ if __name__ == "__main__":
 
     authenticate_gee(os.getenv("GCP_PROJECT_ID"))
 
-    download_config = Sen1Flood11GeeDownloadConfig(
-        _yaml_file="./flood-detection-core/src/flood_detection_core/yamls/gee_download_config.yaml"
+    download_config = Sen1Flood11GeeDownloadConfig.from_yaml(
+        "./flood-detection-core/src/flood_detection_core/yamls/gee_download_config.yaml"
     )
-    data_config = DataConfig(_yaml_file="./flood-detection-core/src/flood_detection_core/yamls/data_config.yaml")
+    data_config = DataConfig.from_yaml("./flood-detection-core/src/flood_detection_core/yamls/data_config.yaml")
     downloader = SitePrefloodDataDownloader(download_config, data_config)
     downloader()

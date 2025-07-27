@@ -59,8 +59,8 @@ def dl_gee_sen1flood11(
     if not gcp_project_id:
         gcp_project_id = os.getenv("GCP_PROJECT_ID")
     authenticate_gee(gcp_project_id)
-    download_config = Sen1Flood11GeeDownloadConfig(_yaml_file=download_config_path)
-    data_config = DataConfig(_yaml_file=data_config_path)
+    download_config = Sen1Flood11GeeDownloadConfig.from_yaml(download_config_path)
+    data_config = DataConfig.from_yaml(data_config_path)
     downloader = SitePrefloodDataDownloader(download_config, data_config)
     downloader()
 

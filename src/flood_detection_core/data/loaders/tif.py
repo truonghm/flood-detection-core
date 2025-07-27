@@ -7,6 +7,8 @@ import rasterio
 from rasterio.crs import CRS
 from rasterio.transform import Affine
 from rich import print
+import magic
+import re
 
 from flood_detection_core.config import DataConfig
 from flood_detection_core.data.metadata.sen1flood11 import PrefloodSiteMetadata, TileMetadata
@@ -234,3 +236,10 @@ class TifRawLoader:
             tile_name = "_".join(file_path.stem.split("_")[:2])
             result[tile_name] = self.load_hl_post_flood_s2_tile_data(tile_name)
         return result
+
+
+def get_image_size(file_path: Path) -> tuple[int, int]:
+    metadata = magic.from_file(file_path)
+    height = re.search(r"height=(\d+)", metadata).group(1)
+    width = re.search(r"width=(\d+)", metadata).group(1)
+    return int(height), int(width)

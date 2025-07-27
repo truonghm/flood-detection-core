@@ -168,7 +168,7 @@ def gen_eda_plots(
         viz_metadata.update(shared_kwargs)
         json.dump(viz_metadata, f, indent=4)
 
-    data_config = DataConfig(_yaml_file=data_config_path)
+    data_config = DataConfig.from_yaml(data_config_path)
     loader = TifRawLoader(data_config)
 
     if not site_name and not tile_name:
