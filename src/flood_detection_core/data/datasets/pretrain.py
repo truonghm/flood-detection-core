@@ -55,11 +55,10 @@ class PretrainDataset(Dataset):
         if len(patch_sequence) != self.num_temporal_length:
             raise ValueError(f"Patch sequence has {len(patch_sequence)} images, expected {self.num_temporal_length}")
 
-        temporal_images = np.stack(patch_sequence, axis=0)  # (T, H, W, C)
+        temporal_images = np.stack(patch_sequence, axis=0)
         if self.transform:
             temporal_images = self.transform(temporal_images)
 
-        # temporal_images = temporal_images.transpose(0, 3, 1, 2)  # (T,H,W,C) -> (T,C,H,W)
         return torch.from_numpy(temporal_images).float()
 
 

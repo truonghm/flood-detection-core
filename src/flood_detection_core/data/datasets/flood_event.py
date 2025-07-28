@@ -47,6 +47,8 @@ class FloodEventDataset(Dataset):
         patch_size: int = 16,
         patch_stride: int = 1,
         transform: Callable | None = None,
+        vv_clipped_range: tuple[float, float] | None = None,
+        vh_clipped_range: tuple[float, float] | None = None,
     ) -> None:
         self.pre_flood_dir = pre_flood_dir
         self.pre_flood_format = pre_flood_format
@@ -57,6 +59,8 @@ class FloodEventDataset(Dataset):
         self.patch_stride = patch_stride
         self.transform = transform
         self.sites = sites
+        self.vv_clipped_range = vv_clipped_range
+        self.vh_clipped_range = vh_clipped_range
 
         self.pre_flood_paths = self._get_pre_flood_paths()
         self.post_flood_paths = self._get_post_flood_paths(self.pre_flood_paths)
@@ -186,7 +190,12 @@ class FloodEventDataset(Dataset):
         return patch_metadata
 
     def _extract_patches_at_coords(
-        self, image_paths: list[Path], patch_coords: tuple[int, int], format: str
+        self,
+        image_paths: list[Path],
+        patch_coords: tuple[int, int],
+        format: str,
+        vv_clipped_range: tuple[float, float] | None = None,
+        vh_clipped_range: tuple[float, float] | None = None,
     ) -> list[np.ndarray]:
         patches = []
         i, j = patch_coords
@@ -200,6 +209,24 @@ class FloodEventDataset(Dataset):
                 data = np.load(img_path)
             else:
                 raise ValueError(f"Invalid format: {format}")
+
+            if vv_clipped_range is not None:
+                # handle nan values
+                vv_band = data[:, :, 0].copy()
+                vv_band = np.where(np.isnan(vv_band), vv_clipped_range[0], vv_band)
+                data[:, :, 0] = np.clip(
+                    (vv_band - vv_clipped_range[0]) / (vv_clipped_range[1] - vv_clipped_range[0]),
+                    0,
+                    1,
+                )
+            if vh_clipped_range is not None:
+                vh_band = data[:, :, 1].copy()
+                vh_band = np.where(np.isnan(vh_band), vh_clipped_range[0], vh_band)
+                data[:, :, 1] = np.clip(
+                    (vh_band - vh_clipped_range[0]) / (vh_clipped_range[1] - vh_clipped_range[0]),
+                    0,
+                    1,
+                )
 
             patch = data[i : i + self.patch_size, j : j + self.patch_size, :]
             patches.append(patch)
@@ -219,18 +246,19 @@ class FloodEventDataset(Dataset):
         )
 
         post_flood_patches = self._extract_patches_at_coords(
-            [tile_pair["post_flood_path"]], patch_coords, self.post_flood_format
+            [tile_pair["post_flood_path"]],
+            patch_coords,
+            self.post_flood_format,
+            vv_clipped_range=self.vv_clipped_range,
+            vh_clipped_range=self.vh_clipped_range,
         )
 
-        pre_flood_patches_numpy = np.stack(pre_flood_patches)  # (T, H, W, C)
-        post_flood_patches_numpy = np.stack(post_flood_patches)  # (1, H, W, C)
+        pre_flood_patches_numpy = np.stack(pre_flood_patches, axis=0)  # (T, H, W, C)
+        post_flood_patches_numpy = np.stack(post_flood_patches, axis=0)  # (1, H, W, C)
 
         if self.transform:
             pre_flood_patches_numpy = self.transform(pre_flood_patches_numpy)
             post_flood_patches_numpy = self.transform(post_flood_patches_numpy)
-
-        pre_flood_patches_numpy = pre_flood_patches_numpy.transpose(0, 3, 1, 2)  # (T,H,W,C) -> (T,C,H,W)
-        post_flood_patches_numpy = post_flood_patches_numpy.transpose(0, 3, 1, 2)  # (1,H,W,C) -> (1,C,H,W)
 
         pre_flood_tensor = torch.from_numpy(pre_flood_patches_numpy).float()
         post_flood_tensor = torch.from_numpy(post_flood_patches_numpy).float()

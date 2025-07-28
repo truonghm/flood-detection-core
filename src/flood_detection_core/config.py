@@ -197,6 +197,24 @@ class CLVAEPretrainConfig(BaseModel):
     batch_size: int = 32
 
 
+class CLVAESiteSpecificConfig(BaseModel):
+    num_temporal_length: int = 4
+    patch_size: int = 16
+    patch_stride: int = 16
+    input_channels: int = 2
+    hidden_channels: int = 64
+    latent_dim: int = 128
+    learning_rate: float = 0.001
+    max_epochs: int = 25
+    scheduler_patience: int = 5
+    scheduler_factor: float = 0.1
+    scheduler_min_lr: float = 0.00001
+    batch_size: int = 32
+    early_stopping_patience: int = 5
+    vv_clipped_range: tuple[float, float] = (-23.0, 0.0)
+    vh_clipped_range: tuple[float, float] = (-28.0, -5.0)
+
+
 class GeometricAugmentationConfig(BaseModel):
     left_right: float = 0.5
     up_down: float = 0.2
@@ -216,6 +234,7 @@ class AugmentationConfig(BaseModel):
 
 class CLVAEConfig(BaseSettingsWithYaml):
     pretrain: CLVAEPretrainConfig
+    site_specific: CLVAESiteSpecificConfig
     augmentation: AugmentationConfig
 
     model_config = SettingsConfigDict(yaml_file=model_config_path)

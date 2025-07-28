@@ -1,3 +1,5 @@
+import datetime
+import json
 from typing import Any
 
 import torch
@@ -13,7 +15,7 @@ from flood_detection_core.data.processing.augmentation import augment_data
 from flood_detection_core.models.clvae import CLVAE
 
 
-def pretrain(wandb_run: Run, data_config: DataConfig, model_config: CLVAEConfig, **kwargs: Any) -> CLVAE:
+def pretrain(data_config: DataConfig, model_config: CLVAEConfig, wandb_run: Run | None = None, **kwargs: Any) -> CLVAE:
     """
     **Purpose**: Handles pre-training phase on pre-flood SAR images
     **Logic**:
@@ -42,7 +44,14 @@ def pretrain(wandb_run: Run, data_config: DataConfig, model_config: CLVAEConfig,
         patch_size=kwargs.get("patch_size", model_config.pretrain.patch_size),
         replacement=kwargs.get("replacement", model_config.pretrain.replacement),
     )
-    wandb_run.config.update(config)
+    if wandb_run:
+        wandb_run.config.update(config)
+
+    current_date = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    model_dir = data_config.artifact.pretrain_dir / f"pretrain_{current_date}"
+    model_dir.mkdir(parents=True, exist_ok=True)
+    with open(model_dir / "config.json", "w") as f:
+        json.dump(config, f)
 
     model = CLVAE(
         input_channels=config["input_channels"],
@@ -69,6 +78,7 @@ def pretrain(wandb_run: Run, data_config: DataConfig, model_config: CLVAEConfig,
     )
     train_size = int(0.8 * len(dataset))
     val_size = len(dataset) - train_size
+    print(f"Train size: {train_size}, Val size: {val_size}")
     train_dataset, val_dataset = torch.utils.data.random_split(dataset, [train_size, val_size])
 
     train_loader = DataLoader(train_dataset, batch_size=config["batch_size"], shuffle=True)
@@ -112,13 +122,14 @@ def pretrain(wandb_run: Run, data_config: DataConfig, model_config: CLVAEConfig,
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             patience_counter = 0
-            torch.save(model.state_dict(), data_config.artifact.pretrain_dir / f"pretrained_model_{epoch}.pth")
+            torch.save(model.state_dict(), model_dir / f"pretrained_model_{epoch}.pth")
         else:
             patience_counter += 1
 
         if epoch % 10 == 0:
             print(f"Epoch {epoch}, Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}")
-            wandb_run.log({"train_loss": train_loss, "val_loss": val_loss})
+            if wandb_run:
+                wandb_run.log({"train_loss": train_loss, "val_loss": val_loss})
 
         if patience_counter >= patience:
             print(f"Early stopping at epoch {epoch}")
@@ -131,6 +142,7 @@ if __name__ == "__main__":
     data_config = DataConfig.from_yaml("./yamls/data.yaml")
     model_config = CLVAEConfig.from_yaml("./yamls/model_clvae.yaml")
 
-    # set num_patches to 10 for testing
-    with wandb.init(project="flood-detection-dl", name="clvae-pretrain", tags=["clvae", "test"]) as run:
-        pretrain(run, data_config, model_config, num_patches=10)
+    # # set num_patches to 10 for testing
+    # with wandb.init(project="flood-detection-dl", name="clvae-pretrain", tags=["clvae", "test"]) as run:
+    #     pretrain(data_config, model_config, wandb_run=run, num_patches=10)
+    pretrain(data_config, model_config, num_patches=10)

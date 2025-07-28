@@ -73,32 +73,78 @@ def dl_gee_sen1flood11(
 def pretrain(
     data_config_path: Annotated[str, typer.Option("--data-config-path")] = default_data_config_path,
     model_config_path: Annotated[str, typer.Option("--model-config-path")] = default_model_config_path,
+    use_wandb: Annotated[bool, typer.Option("--wandb/--no-wandb")] = True,
 ) -> None:
-    import wandb
     from flood_detection_core.config import CLVAEConfig, DataConfig
     from flood_detection_core.train.pretrain import pretrain
 
     data_config = DataConfig.from_yaml(data_config_path)
     model_config = CLVAEConfig.from_yaml(model_config_path)
 
-    with wandb.init(project="flood-detection-dl", name="clvae-pretrain", tags=["clvae"]) as run:
-        pretrain(run, data_config, model_config)
+    if use_wandb:
+        import wandb
+
+        with wandb.init(project="flood-detection-dl", name="clvae-pretrain", tags=["clvae"]) as run:
+            pretrain(data_config, model_config, wandb_run=run)
+    else:
+        pretrain(data_config, model_config)
 
 
 @app.command()
 def pretrain_test(
     data_config_path: Annotated[str, typer.Option("--data-config-path")] = default_data_config_path,
     model_config_path: Annotated[str, typer.Option("--model-config-path")] = default_model_config_path,
+    use_wandb: Annotated[bool, typer.Option("--wandb/--no-wandb")] = True,
 ) -> None:
-    import wandb
     from flood_detection_core.config import CLVAEConfig, DataConfig
     from flood_detection_core.train.pretrain import pretrain
 
     data_config = DataConfig.from_yaml(data_config_path)
     model_config = CLVAEConfig.from_yaml(model_config_path)
 
-    with wandb.init(project="flood-detection-dl", name="clvae-pretrain", tags=["clvae", "test"]) as run:
-        pretrain(run, data_config, model_config, num_patches=10)
+    if use_wandb:
+        import wandb
+
+        with wandb.init(project="flood-detection-dl", name="clvae-pretrain", tags=["clvae"]) as run:
+            pretrain(data_config, model_config, wandb_run=run, num_patches=10)
+    else:
+        pretrain(data_config, model_config, num_patches=10)
+
+
+@app.command()
+def site_specific_train(
+    site_name: Annotated[str, typer.Option("--site-name")],
+    pretrained_model_path: Annotated[str, typer.Option("--pretrained-model-path")],
+    data_config_path: Annotated[str, typer.Option("--data-config-path")] = default_data_config_path,
+    model_config_path: Annotated[str, typer.Option("--model-config-path")] = default_model_config_path,
+    use_wandb: Annotated[bool, typer.Option("--wandb/--no-wandb")] = True,
+) -> None:
+    from flood_detection_core.config import CLVAEConfig, DataConfig
+    from flood_detection_core.train.site_specific import site_specific_train
+
+    data_config = DataConfig.from_yaml(data_config_path)
+    model_config = CLVAEConfig.from_yaml(model_config_path)
+
+    if use_wandb:
+        import wandb
+
+        with wandb.init(
+            project="flood-detection-dl", name=f"clvae-site-specific-{site_name}", tags=["clvae", "site-specific"]
+        ) as run:
+            site_specific_train(
+                data_config=data_config,
+                model_config=model_config,
+                pretrained_model_path=pretrained_model_path,
+                site_name=site_name,
+                wandb_run=run,
+            )
+    else:
+        site_specific_train(
+            data_config=data_config,
+            model_config=model_config,
+            pretrained_model_path=pretrained_model_path,
+            site_name=site_name,
+        )
 
 
 if __name__ == "__main__":
