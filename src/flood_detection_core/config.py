@@ -57,6 +57,10 @@ class DataDirConfig(BaseModel):
     data_dir: str | Path
 
 
+class ArtifactDirConfig(DataDirConfig):
+    pretrain_dir: str | Path
+
+
 class GEEDataConfig(DataDirConfig):
     pre_flood_dir: str | Path
     pretrain_dir: str | Path
@@ -144,6 +148,7 @@ class DataConfig(BaseSettingsWithYaml):
     relative_to: str | Path = Field(default=".", description="The relative path to the root of the project")
     gee: GEEDataConfig
     hand_labeled_sen1flood11: Sen1Flood11HandLabeledDataConfig
+    artifact: ArtifactDirConfig
 
     @model_validator(mode="before")
     def validate_paths(cls, values):
@@ -156,7 +161,7 @@ class DataConfig(BaseSettingsWithYaml):
                 raise ValueError(f"Root path {root_path} does not exist")
 
             # Process both gee and sen1flood11 configs
-            for config_name in ["gee", "hand_labeled_sen1flood11"]:
+            for config_name in ["gee", "hand_labeled_sen1flood11", "artifact"]:
                 config_values = values.get(config_name)
                 if config_values and isinstance(config_values, dict):
                     data_dir = config_values.get("data_dir")
@@ -181,6 +186,15 @@ class CLVAEPretrainConfig(BaseModel):
     patch_size: int = 16
     patch_stride: int = 16
     replacement: bool = False
+    input_channels: int = 2
+    hidden_channels: int = 64
+    latent_dim: int = 128
+    learning_rate: float = 0.001
+    max_epochs: int = 50
+    scheduler_patience: int = 5
+    scheduler_factor: float = 0.1
+    scheduler_min_lr: float = 0.00001
+    batch_size: int = 32
 
 
 class GeometricAugmentationConfig(BaseModel):

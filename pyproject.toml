@@ -23,6 +23,8 @@ dependencies = [
     "typer>=0.16.0",
     "torch>=2.7.0",
     "python-magic>=0.4.27",
+    "wandb>=0.21.0",
+    "torchmetrics>=1.8.0",
 ]
 
 [build-system]

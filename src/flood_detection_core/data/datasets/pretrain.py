@@ -59,7 +59,7 @@ class PretrainDataset(Dataset):
         if self.transform:
             temporal_images = self.transform(temporal_images)
 
-        temporal_images = temporal_images.transpose(0, 3, 1, 2)  # (T,H,W,C) -> (T,C,H,W)
+        # temporal_images = temporal_images.transpose(0, 3, 1, 2)  # (T,H,W,C) -> (T,C,H,W)
         return torch.from_numpy(temporal_images).float()
 
 

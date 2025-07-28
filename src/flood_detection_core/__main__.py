@@ -4,13 +4,17 @@ import typer
 
 app = typer.Typer()
 
+default_data_config_path = "./yamls/data.yaml"
+default_model_config_path = "./yamls/model_clvae.yaml"
+default_download_config_path = "./yamls/download.yaml"
+
 
 @app.command()
 def eda(
-    data_config_path: Annotated[str, typer.Option("--data-config-path")],
+    data_config_path: Annotated[str, typer.Option("--data-config-path")] = default_data_config_path,
     site_name: Annotated[str | None, typer.Option("--site-name", "-sn")] = None,
     tile_name: Annotated[str | None, typer.Option("--tile-name", "-tn")] = None,
-    output_dir: Annotated[str | None, typer.Option("--output-dir", "-o")] = None,
+    output_dir: Annotated[str | None, typer.Option("--output-dir", "-o")] = "./visualizations",
     pre_flood_index_for_cd: Annotated[int, typer.Option("--pf-index")] = -1,
     vv_norm_lb: Annotated[float, typer.Option("--vv-norm-lb")] = -23,
     vv_norm_ub: Annotated[float, typer.Option("--vv-norm-ub")] = 0,
@@ -46,8 +50,8 @@ def eda(
 
 @app.command()
 def dl_gee_sen1flood11(
-    data_config_path: Annotated[str, typer.Option("--data-config-path")],
-    download_config_path: Annotated[str, typer.Option("--download-config-path")],
+    data_config_path: Annotated[str, typer.Option("--data-config-path")] = default_data_config_path,
+    download_config_path: Annotated[str, typer.Option("--download-config-path")] = default_download_config_path,
     gcp_project_id: Annotated[str | None, typer.Option("--gcp-project-id")] = None,
 ) -> None:
     import os
@@ -63,6 +67,38 @@ def dl_gee_sen1flood11(
     data_config = DataConfig.from_yaml(data_config_path)
     downloader = SitePrefloodDataDownloader(download_config, data_config)
     downloader()
+
+
+@app.command()
+def pretrain(
+    data_config_path: Annotated[str, typer.Option("--data-config-path")] = default_data_config_path,
+    model_config_path: Annotated[str, typer.Option("--model-config-path")] = default_model_config_path,
+) -> None:
+    import wandb
+    from flood_detection_core.config import CLVAEConfig, DataConfig
+    from flood_detection_core.train.pretrain import pretrain
+
+    data_config = DataConfig.from_yaml(data_config_path)
+    model_config = CLVAEConfig.from_yaml(model_config_path)
+
+    with wandb.init(project="flood-detection-dl", name="clvae-pretrain", tags=["clvae"]) as run:
+        pretrain(run, data_config, model_config)
+
+
+@app.command()
+def pretrain_test(
+    data_config_path: Annotated[str, typer.Option("--data-config-path")] = default_data_config_path,
+    model_config_path: Annotated[str, typer.Option("--model-config-path")] = default_model_config_path,
+) -> None:
+    import wandb
+    from flood_detection_core.config import CLVAEConfig, DataConfig
+    from flood_detection_core.train.pretrain import pretrain
+
+    data_config = DataConfig.from_yaml(data_config_path)
+    model_config = CLVAEConfig.from_yaml(model_config_path)
+
+    with wandb.init(project="flood-detection-dl", name="clvae-pretrain", tags=["clvae", "test"]) as run:
+        pretrain(run, data_config, model_config, num_patches=10)
 
 
 if __name__ == "__main__":
