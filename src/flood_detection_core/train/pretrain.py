@@ -1,5 +1,8 @@
+# TODO: scale with multi-gpu setup
+
 import datetime
 import json
+from pathlib import Path
 from typing import Any
 
 import torch
@@ -15,7 +18,13 @@ from flood_detection_core.data.processing.augmentation import augment_data
 from flood_detection_core.models.clvae import CLVAE
 
 
-def pretrain(data_config: DataConfig, model_config: CLVAEConfig, wandb_run: Run | None = None, **kwargs: Any) -> CLVAE:
+def pretrain(
+    data_config: DataConfig,
+    model_config: CLVAEConfig,
+    wandb_run: Run | None = None,
+    resume_checkpoint: Path | str | None = None,
+    **kwargs: Any,
+) -> tuple[CLVAE, Path]:
     """
     **Purpose**: Handles pre-training phase on pre-flood SAR images
     **Logic**:
@@ -84,11 +93,24 @@ def pretrain(data_config: DataConfig, model_config: CLVAEConfig, wandb_run: Run 
     train_loader = DataLoader(train_dataset, batch_size=config["batch_size"], shuffle=True)
     val_loader = DataLoader(val_dataset, batch_size=config["batch_size"], shuffle=True)
 
+    start_epoch = 0
     best_val_loss = float("inf")
     patience_counter = 0
     patience = 10
 
-    for epoch in track(range(config["max_epochs"]), description="Pre-training:"):
+    if resume_checkpoint:
+        resume_checkpoint = Path(resume_checkpoint)
+        if resume_checkpoint.exists():
+            checkpoint = torch.load(resume_checkpoint)
+            model.load_state_dict(checkpoint["model_state"])
+            optimizer.load_state_dict(checkpoint["optimizer_state"])
+            scheduler.load_state_dict(checkpoint["scheduler_state"])
+            start_epoch = checkpoint["epoch"] + 1
+            best_val_loss = checkpoint["best_val_loss"]
+            patience_counter = checkpoint["patience_counter"]
+            print(f"Resuming pre-training from epoch {start_epoch} with best val loss {best_val_loss}")
+
+    for epoch in track(range(start_epoch, config["max_epochs"]), description="Pre-training:"):
         model.train()
         train_loss = 0.0
         for batch in train_loader:
@@ -122,7 +144,27 @@ def pretrain(data_config: DataConfig, model_config: CLVAEConfig, wandb_run: Run 
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             patience_counter = 0
-            torch.save(model.state_dict(), model_dir / f"pretrained_model_{epoch}.pth")
+            checkpoint_path = model_dir / f"pretrained_model_{epoch}.pth"
+            torch.save(
+                {
+                    "model_state": model.state_dict(),
+                    "optimizer_state": optimizer.state_dict(),
+                    "scheduler_state": scheduler.state_dict(),
+                    "best_val_loss": val_loss,
+                    "epoch": epoch,
+                    "patience_counter": patience_counter,
+                },
+                checkpoint_path
+            )
+
+            best_model_info = {
+                "epoch": epoch,
+                "val_loss": val_loss,
+                "checkpoint_path": str(checkpoint_path),
+                "train_loss": train_loss,
+            }
+            with open(model_dir / "best_model_info.json", "w") as f:
+                json.dump(best_model_info, f, indent=2)
         else:
             patience_counter += 1
 
@@ -135,14 +177,20 @@ def pretrain(data_config: DataConfig, model_config: CLVAEConfig, wandb_run: Run 
             print(f"Early stopping at epoch {epoch}")
             break
 
-    return model
+    print("Finish pre-training, best model info is saved at:")
+    print(model_dir / "best_model_info.json")
+    return model, model_dir / "best_model_info.json"
 
 
 if __name__ == "__main__":
     data_config = DataConfig.from_yaml("./yamls/data.yaml")
     model_config = CLVAEConfig.from_yaml("./yamls/model_clvae.yaml")
 
+    use_wandb = False
+
     # # set num_patches to 10 for testing
-    # with wandb.init(project="flood-detection-dl", name="clvae-pretrain", tags=["clvae", "test"]) as run:
-    #     pretrain(data_config, model_config, wandb_run=run, num_patches=10)
-    pretrain(data_config, model_config, num_patches=10)
+    if use_wandb:
+        with wandb.init(project="flood-detection-dl", name="clvae-pretrain", tags=["clvae", "test"]) as run:
+            pretrain(data_config, model_config, wandb_run=run, num_patches=10)
+    else:
+        pretrain(data_config, model_config, num_patches=10)

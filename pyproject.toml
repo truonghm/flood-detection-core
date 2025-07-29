@@ -42,3 +42,8 @@ flood_detection_core = "flood_detection_core.__main__:app"
 name = "pytorch-cu126"
 url = "https://download.pytorch.org/whl/cu126"
 explicit = true
+
+[dependency-groups]
+dev = [
+    "vastai>=0.2.8",
+]

@@ -1,3 +1,5 @@
+# TODO: scale with multi-gpu setup
+
 import datetime
 import json
 from pathlib import Path
@@ -19,12 +21,13 @@ from flood_detection_core.models.clvae import CLVAE
 def site_specific_train(
     data_config: DataConfig,
     model_config: CLVAEConfig,
-    pretrained_model_path: str | Path,
     site_name: str,
     wandb_run: Run | None = None,
     debug: bool = False,
+    pretrained_model_path: Path | str | None = None,
+    resume_checkpoint: Path | str | None = None,
     **kwargs: Any,
-) -> CLVAE:
+) -> tuple[CLVAE, Path]:
     """
     Site-specific fine-tuning for each flood event using contrastive learning.
 
@@ -43,12 +46,16 @@ def site_specific_train(
         Data configuration containing paths and settings
     model_config : CLVAEConfig
         Model configuration with hyperparameters
-    pretrained_model_path : str | Path
-        Path to pretrained model checkpoint
     site_name : str
         Name of the flood site for training
     wandb_run : Run | None
         Optional W&B run for logging
+    debug : bool
+        Enable debug mode for testing
+    pretrained_model_path : str | Path | None
+        Path to pretrained model checkpoint (mutually exclusive with resume_checkpoint)
+    resume_checkpoint : str | Path | None
+        Path to resume checkpoint (mutually exclusive with pretrained_model_path)
     **kwargs : Any
         Additional keyword arguments to override config parameters
 
@@ -57,6 +64,12 @@ def site_specific_train(
     CLVAE
         Fine-tuned model for the specific site
     """
+    # Validation: exactly one of pretrained_model_path or resume_checkpoint must be provided
+    if pretrained_model_path and resume_checkpoint:
+        raise ValueError("Cannot provide both pretrained_model_path and resume_checkpoint. Use only one.")
+    if not pretrained_model_path and not resume_checkpoint:
+        raise ValueError("Must provide either pretrained_model_path or resume_checkpoint.")
+
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     if not data_config.artifact.pretrain_dir.exists():
@@ -103,14 +116,6 @@ def site_specific_train(
         latent_dim=config["latent_dim"],
     ).to(device)
 
-    pretrained_path = Path(pretrained_model_path)
-    if not pretrained_path.exists():
-        raise FileNotFoundError(f"Pretrained model not found at {pretrained_path}")
-
-    print(f"Loading pretrained weights from {pretrained_path}")
-    state_dict = torch.load(pretrained_path, map_location=device)
-    model.load_state_dict(state_dict)
-
     optimizer = torch.optim.Adam(model.parameters(), lr=config["learning_rate"])
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimizer,
@@ -118,6 +123,15 @@ def site_specific_train(
         factor=config["scheduler_factor"],
         min_lr=config["scheduler_min_lr"],
     )
+
+    if pretrained_model_path:
+        pretrained_path = Path(pretrained_model_path)
+        if not pretrained_path.exists():
+            raise FileNotFoundError(f"Pretrained model not found at {pretrained_path}")
+
+        print(f"Loading pretrained weights from {pretrained_path}")
+        state_dict = torch.load(pretrained_path, map_location=device)
+        model.load_state_dict(state_dict["model_state"])
 
     dataset = FloodEventDataset(
         pre_flood_dir=data_config.gee.pre_flood_dir,
@@ -145,9 +159,22 @@ def site_specific_train(
     train_loader = DataLoader(train_dataset, batch_size=config["batch_size"], shuffle=True)
     val_loader = DataLoader(val_dataset, batch_size=config["batch_size"], shuffle=False)
 
+    start_epoch = 0
     best_val_loss = float("inf")
     patience_counter = 0
     patience = config["early_stopping_patience"]
+
+    if resume_checkpoint:
+        resume_checkpoint = Path(resume_checkpoint)
+        if resume_checkpoint.exists():
+            checkpoint = torch.load(resume_checkpoint, map_location=device)
+            model.load_state_dict(checkpoint["model_state"])
+            optimizer.load_state_dict(checkpoint["optimizer_state"])
+            scheduler.load_state_dict(checkpoint["scheduler_state"])
+            start_epoch = checkpoint["epoch"] + 1
+            best_val_loss = checkpoint["best_val_loss"]
+            patience_counter = checkpoint["patience_counter"]
+            print(f"Resuming training for {site_name} from epoch {start_epoch} with best val loss {best_val_loss}")
 
     print(f"Starting site-specific training for {site_name}")
 
@@ -156,7 +183,7 @@ def site_specific_train(
         train_task = progress.add_task("Training", total=len(train_loader))
         val_task = progress.add_task("Validation", total=len(val_loader))
 
-        for epoch in range(config["max_epochs"]):
+        for epoch in range(start_epoch, config["max_epochs"]):
             model.train()
             train_loss = 0.0
             train_recon_loss = 0.0
@@ -272,9 +299,18 @@ def site_specific_train(
                 patience_counter = 0
 
                 checkpoint_path = model_dir / f"site_specific_model_{site_name}_epoch_{epoch}.pth"
-                torch.save(model.state_dict(), checkpoint_path)
+                torch.save(
+                    {
+                        "model_state": model.state_dict(),
+                        "optimizer_state": optimizer.state_dict(),
+                        "scheduler_state": scheduler.state_dict(),
+                        "best_val_loss": val_loss,
+                        "epoch": epoch,
+                        "patience_counter": patience_counter,
+                    },
+                    checkpoint_path,
+                )
 
-                # Save best model info
                 best_model_info = {
                     "epoch": epoch,
                     "val_loss": val_loss,
@@ -325,7 +361,7 @@ def site_specific_train(
     print(f"Best validation loss: {best_val_loss:.6f}")
     print(f"Model saved in: {model_dir}")
 
-    return model
+    return model, model_dir / "best_model_info.json"
 
 
 if __name__ == "__main__":
@@ -335,7 +371,7 @@ if __name__ == "__main__":
     data_config = DataConfig.from_yaml("./yamls/data.yaml")
     model_config = CLVAEConfig.from_yaml("./yamls/model_clvae.yaml")
 
-    pretrained_model_path = data_config.artifact.pretrain_dir / "pretrain_20250728_153144" / "pretrained_model_20.pth"
+    pretrained_model_path = data_config.artifact.pretrain_dir / "pretrain_20250729_180639" / "pretrained_model_49.pth"
     site_name = "bolivia"
 
     test_kwargs = {
@@ -349,9 +385,20 @@ if __name__ == "__main__":
             project="flood-detection-dl", name=f"clvae-site-specific-{site_name}", tags=["clvae", "site-specific"]
         ) as run:
             model = site_specific_train(
-                data_config, model_config, pretrained_model_path, site_name, wandb_run=run, debug=False, **test_kwargs
+                data_config,
+                model_config,
+                site_name,
+                wandb_run=run,
+                debug=False,
+                pretrained_model_path=pretrained_model_path,
+                **test_kwargs,
             )
     else:
         model = site_specific_train(
-            data_config, model_config, pretrained_model_path, site_name, debug=False, **test_kwargs
+            data_config,
+            model_config,
+            site_name,
+            debug=False,
+            pretrained_model_path=pretrained_model_path,
+            **test_kwargs,
         )
