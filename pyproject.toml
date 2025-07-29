@@ -25,6 +25,7 @@ dependencies = [
     "python-magic>=0.4.27",
     "wandb>=0.21.0",
     "torchmetrics>=1.8.0",
+    "optuna>=4.4.0",
 ]
 
 [build-system]
