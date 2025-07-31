@@ -1,4 +1,4 @@
-import datetime
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Literal
@@ -9,13 +9,8 @@ import torch
 from torch.utils.data import Dataset
 
 from flood_detection_core.data.constants import HandLabeledSen1Flood11Sites
-from flood_detection_core.data.loaders.tif import get_image_size
+from flood_detection_core.data.processing.patches import create_patch_metadata, extract_patches_at_coords
 from flood_detection_core.data.processing.split import get_flood_event_tile_pairs
-
-
-def get_image_size_v2(file_path: Path) -> tuple[int, int]:
-    with rasterio.open(file_path) as src:
-        return src.height, src.width
 
 
 class FloodEventDataset(Dataset):
@@ -59,73 +54,19 @@ class FloodEventDataset(Dataset):
         self.vh_clipped_range = vh_clipped_range
         self.dataset_type = dataset_type
 
-        self.tile_pairs = get_flood_event_tile_pairs(
+        tile_pairs = get_flood_event_tile_pairs(
             dataset_type=dataset_type,
             pre_flood_split_csv_path=self.pre_flood_split_csv_path,
             post_flood_split_csv_path=self.post_flood_split_csv_path,
         )
-        self.patch_metadata = self._create_patch_metadata()
+        self.patch_metadata = create_patch_metadata(
+            tile_pairs=tile_pairs,
+            num_temporal_length=self.num_temporal_length,
+            patch_size=self.patch_size,
+            patch_stride=self.patch_stride,
+        )
 
-    def _create_patch_metadata(self) -> list[dict]:
-        total_patches = 0
-        tile_patch_counts = []
-
-        for tile_pair in self.tile_pairs:
-            try:
-                all_image_paths = tile_pair["pre_flood_paths"] + [tile_pair["post_flood_path"]]
-
-                min_height, min_width = float("inf"), float("inf")
-
-                for img_path in all_image_paths:
-                    img_height, img_width = get_image_size(img_path)
-                    min_height = min(min_height, img_height)
-                    min_width = min(min_width, img_width)
-
-                if min_height < self.patch_size or min_width < self.patch_size:
-                    continue
-
-                max_i = min_height - self.patch_size + 1
-                max_j = min_width - self.patch_size + 1
-                patch_count = len(range(0, max_i, self.patch_stride)) * len(range(0, max_j, self.patch_stride))
-                tile_patch_counts.append(
-                    (
-                        tile_pair,
-                        min_height,
-                        min_width,
-                        max_i,
-                        max_j,
-                        patch_count,
-                    )
-                )
-                total_patches += patch_count
-            except Exception:
-                tile_patch_counts.append(None)
-
-        patch_metadata = [None] * total_patches
-
-        idx = 0
-        for tile_data in tile_patch_counts:
-            if tile_data is None:
-                continue
-
-            tile_pair, min_height, min_width, max_i, max_j, patch_count = tile_data
-
-            for i in range(0, max_i, self.patch_stride):
-                for j in range(0, max_j, self.patch_stride):
-                    patch_metadata[idx] = {
-                        "tile_pair": tile_pair,
-                        "patch_coords": (i, j),
-                        "img_dims": (min_height, min_width),
-                    }
-                    idx += 1
-
-                # for i in range(0, max_i, self.patch_stride):
-                #     for j in range(0, max_j, self.patch_stride):
-                #         patch_metadata.append(
-                #             {"tile_pair": tile_pair, "patch_coords": (i, j), "img_dims": (min_height, min_width)}
-                #         )
-
-        return patch_metadata
+        del tile_pairs
 
     def _extract_patches_at_coords(
         self,
@@ -138,11 +79,14 @@ class FloodEventDataset(Dataset):
         i, j = patch_coords
 
         for img_path in image_paths:
-            if img_path.endswith(".tif"):
+            if isinstance(img_path, str):
+                img_path = Path(img_path)
+
+            if img_path.suffix == ".tif":
                 with rasterio.open(img_path) as src:
                     data = src.read()
                     data = np.transpose(data, (1, 2, 0))
-            elif img_path.endswith(".npy"):
+            elif img_path.suffix == ".npy":
                 data = np.load(img_path)
             else:
                 raise ValueError(f"Invalid format: {img_path}")
@@ -178,24 +122,55 @@ class FloodEventDataset(Dataset):
         tile_pair = patch_meta["tile_pair"]
         patch_coords = patch_meta["patch_coords"]
 
-        pre_flood_patches = self._extract_patches_at_coords(tile_pair["pre_flood_paths"], patch_coords)
-
-        post_flood_patches = self._extract_patches_at_coords(
-            [tile_pair["post_flood_path"]],
-            patch_coords,
+        # start_time = time.time()
+        pre_flood_patches = extract_patches_at_coords(
+            image_paths=tile_pair["pre_flood_paths"],
+            patch_coords=patch_coords,
+            patch_size=self.patch_size,
             vv_clipped_range=self.vv_clipped_range,
             vh_clipped_range=self.vh_clipped_range,
         )
 
-        pre_flood_patches_numpy = np.stack(pre_flood_patches, axis=0)  # (T, H, W, C)
-        post_flood_patches_numpy = np.stack(post_flood_patches, axis=0)  # (1, H, W, C)
+        post_flood_patches = extract_patches_at_coords(
+            image_paths=[tile_pair["post_flood_path"]],
+            patch_coords=patch_coords,
+            patch_size=self.patch_size,
+            vv_clipped_range=self.vv_clipped_range,
+            vh_clipped_range=self.vh_clipped_range,
+        )
+        pre_flood_patches = [np.ascontiguousarray(p) for p in pre_flood_patches]
+        post_flood_patches = [np.ascontiguousarray(p) for p in post_flood_patches]
+        # print(f"Time taken to extract patches: {time.time() - start_time} seconds")
 
+        # start_time = time.time()
+
+        # pre_flood_patches_numpy = np.stack(pre_flood_patches, axis=0)
+        # post_flood_patches_numpy = np.stack(post_flood_patches, axis=0)
+        # pre_flood_patches_numpy = np.array(pre_flood_patches)
+        # post_flood_patches_numpy = np.array(post_flood_patches)
+
+        pre_flood_patches_numpy = np.empty(
+            (len(pre_flood_patches), self.patch_size, self.patch_size, 2), dtype=np.float32
+        )
+        post_flood_patches_numpy = np.empty((1, self.patch_size, self.patch_size, 2), dtype=np.float32)
+
+        for i, patch in enumerate(pre_flood_patches):
+            pre_flood_patches_numpy[i] = patch
+
+        for i, patch in enumerate(post_flood_patches):
+            post_flood_patches_numpy[i] = patch
+
+        # print(f"Time taken to stack patches: {time.time() - start_time} seconds")
+
+        # start_time = time.time()
         if self.transform:
             pre_flood_patches_numpy = self.transform(pre_flood_patches_numpy)
             post_flood_patches_numpy = self.transform(post_flood_patches_numpy)
 
         pre_flood_tensor = torch.from_numpy(pre_flood_patches_numpy).float()
         post_flood_tensor = torch.from_numpy(post_flood_patches_numpy).float()
+
+        # print(f"Time taken to convert to tensor: {time.time() - start_time} seconds")
 
         return pre_flood_tensor, post_flood_tensor
 
@@ -219,6 +194,8 @@ if __name__ == "__main__":
         vv_clipped_range=model_config.site_specific.vv_clipped_range,
         vh_clipped_range=model_config.site_specific.vh_clipped_range,
     )
+
+    print("Length of train dataset:", len(train_dataset))
 
     dataloader = DataLoader(train_dataset, batch_size=32, shuffle=True)
 

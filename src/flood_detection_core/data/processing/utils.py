@@ -1,54 +1,48 @@
 import datetime
+import random
+import re
 from pathlib import Path
 
-from flood_detection_core.types import FloodPathsType
+import magic
+import rasterio
+
+from flood_detection_core.exceptions import NotEnoughImagesError
 
 
-def get_pre_flood_paths_mapping(pre_flood_dir: Path, sites: list[str], num_temporal_length: int) -> FloodPathsType:
-    site_path_mapping = {}
-    for site in sites:
-        tile_path_mapping = {}
-        for tile_dir in pre_flood_dir.glob(f"{site}/*/"):
-            tile_paths = []
-            tile_dates = []
-            for tile_path in tile_dir.glob("*.tif"):
-                img_date = datetime.datetime.strptime(tile_path.stem.split("_")[-1].replace(".tif", ""), "%Y-%m-%d")
-                tile_paths.append(tile_path)
-                tile_dates.append(img_date)
-
-            tile_paths, tile_dates = zip(*sorted(zip(tile_paths, tile_dates), key=lambda x: x[1]))
-            tile_paths = list(tile_paths)[:num_temporal_length]
-            tile_path_mapping[tile_dir.name] = tile_paths
-
-        site_path_mapping[site] = tile_path_mapping
-
-    return site_path_mapping
+def get_image_size(file_path: Path) -> tuple[int, int]:
+    metadata = magic.from_file(file_path)
+    height = re.search(r"height=(\d+)", metadata).group(1)
+    width = re.search(r"width=(\d+)", metadata).group(1)
+    return int(height), int(width)
 
 
-def get_sen1flood11_paths_mapping(pre_flood_paths: FloodPathsType, dir: Path) -> FloodPathsType:
-    site_path_mapping = {}
-    for site, tile_path_mapping in pre_flood_paths.items():
-        site_path_mapping[site] = {}
-        for tile_id in tile_path_mapping.keys():
-            post_flood_path = list(dir.glob(f"{tile_id}_*.tif"))
-            site_path_mapping[site][tile_id] = post_flood_path
-
-    return site_path_mapping
+def get_image_size_v2(file_path: Path) -> tuple[int, int]:
+    with rasterio.open(file_path) as src:
+        return src.height, src.width
 
 
-def create_tile_pairs(pre_flood_paths: FloodPathsType, post_flood_paths: FloodPathsType) -> list[dict]:
-    tile_pairs = []
+def choose_pre_flood_paths(paths: list[Path | str], num_temporal_length: int) -> list[Path]:
+    if isinstance(paths[0], str):
+        path_objs = [Path(path) for path in paths]
+    else:
+        path_objs = paths
 
-    for site, tile_path_mapping in pre_flood_paths.items():
-        for tile_id, tile_paths in tile_path_mapping.items():
-            post_flood_path = post_flood_paths[site][tile_id]
-            tile_pairs.append(
-                {
-                    "tile_id": tile_id,
-                    "pre_flood_paths": [str(path.absolute()) for path in tile_paths],
-                    "post_flood_path": str(post_flood_path[0].absolute()),
-                    "site": site,
-                }
-            )
+    ts_length = len(path_objs)
+    n_ts_length = num_temporal_length
+    path_indices = [int(re.search(r"pre_flood_(\d+)_", path.name).group(1)) for path in path_objs]
 
-    return tile_pairs
+    # sort paths based on indices
+    sorted_paths = [path for _, path in sorted(zip(path_indices, paths))]
+
+    if ts_length < n_ts_length:
+        raise NotEnoughImagesError(
+            f"Tile has fewer than {n_ts_length} images ({ts_length} < {n_ts_length})" + f"\nCheck: {path_objs[0].name}"
+        )
+
+    # randomly pick n_ts_length CONSECUTIVE images
+    ts_start_idx = random.randint(0, ts_length - n_ts_length)
+    ts_end_idx = ts_start_idx + n_ts_length
+
+    chosen_tile_paths = sorted_paths[ts_start_idx:ts_end_idx]
+
+    return chosen_tile_paths

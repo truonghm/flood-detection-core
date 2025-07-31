@@ -251,7 +251,9 @@ def site_specific_train(
                     return model
 
                 progress.update(train_task, advance=1)
+                # break
 
+            # break
             model.eval()
             val_loss = 0.0
             val_recon_loss = 0.0
@@ -289,6 +291,7 @@ def site_specific_train(
                     val_contrastive_loss += loss_dict["contrastive_loss"].item()
 
                     progress.update(val_task, advance=1)
+                    # break
 
             train_loss /= len(train_loader)
             train_recon_loss /= len(train_loader)
@@ -379,14 +382,15 @@ if __name__ == "__main__":
     data_config = DataConfig.from_yaml("./yamls/data.yaml")
     model_config = CLVAEConfig.from_yaml("./yamls/model_clvae.yaml")
 
-    pretrained_model_path = data_config.artifact.pretrain_dir / "pretrain_20250729_180639" / "pretrained_model_49.pth"
+    pretrained_model_path = data_config.artifact.pretrain_dir / "pretrain_20250731_184442" / "pretrained_model_33.pth"
     site_name = "bolivia"
 
     test_kwargs = {
         "max_epochs": 2,
-        "batch_size": 64,
+        "batch_size": 32,
         "early_stopping_patience": 2,
         "scheduler_patience": 1,
+        "patch_stride": 2,
     }
     if use_wandb:
         with wandb.init(

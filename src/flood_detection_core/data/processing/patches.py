@@ -1,35 +1,18 @@
-"""
-TODO: Rework this module completely
-
-- Separate into: Pretrain Sampler and an actual PatchesExtractor that focuses on only extracting patches
-
-- Pretrain Sampler:
-    - Maybe merge into the Pretrain dataset? Focus on sampling sites/tiles and image sequences (4 from 8).
-    - Output is a list of paths to 4-image sequences.
-
-- Patches Extractor:
-    - Given a list of image paths, extract patches from them
-    - Focus on the extract_one_sequence method, but the date picking logic should be moved to the Pretrain Sampler
-    - Can be used for both pretraining and normal training (FloodEventDataset).
-"""
-
 import csv
 import datetime
 import random
 import re
 from pathlib import Path
-from typing import Literal
+from typing import Callable
 
 import numpy as np
 import rasterio
+from rich import print
+from rich.progress import Progress
 
-
-class NotEnoughImagesError(Exception):
-    pass
-
-
-class TileTooSmallError(Exception):
-    pass
+from flood_detection_core.data.processing.utils import choose_pre_flood_paths, get_image_size
+from flood_detection_core.exceptions import NotEnoughImagesError, TileTooSmallError
+from flood_detection_core.data.processing.augmentation import augment_data
 
 
 def get_img_path(tile_dir: Path, idx: int, extension: str = "tif") -> tuple[Path, datetime.datetime]:
@@ -86,23 +69,7 @@ class PreTrainPatchesExtractor:
         return chosen_tile_paths
 
     def extract_one_sequence(self, tile_name: str, paths: list[Path]) -> list[np.ndarray] | None:
-        ts_length = len(paths)
-        n_ts_length = self.num_temporal_length
-        path_indices = [int(re.search(r"pre_flood_(\d+)_", path.name).group(1)) for path in paths]
-
-        # sort paths based on indices
-        sorted_paths = [path for _, path in sorted(zip(path_indices, paths))]
-
-        if ts_length < n_ts_length:
-            raise NotEnoughImagesError(
-                f"Tile {tile_name} has fewer than {n_ts_length} images ({ts_length} < {n_ts_length})"
-            )
-
-        # randomly pick n_ts_length CONSECUTIVE images
-        ts_start_idx = random.randint(1, ts_length - n_ts_length)
-        ts_end_idx = ts_start_idx + n_ts_length - 1
-
-        chosen_tile_paths = sorted_paths[ts_start_idx : ts_end_idx]
+        chosen_tile_paths = choose_pre_flood_paths(paths, self.num_temporal_length)
 
         images_data = []
         min_height, min_width = float("inf"), float("inf")
@@ -180,67 +147,260 @@ class PreTrainPatchesExtractor:
         return self.extract(idx)
 
 
-def extract_flood_event_patches(
-    tile_paths: list[Path],
-    dates: list[datetime.datetime] | None = None,
-    format: Literal["geotiff", "numpy"] = "geotiff",
-    patch_size: int = 16,
-    patch_stride: int = 1,
-) -> list[list[np.ndarray]]:
-    """
-    Extract a sequence of patches from a list of tile paths and dates.
-    Dates are optional and will be used for sorting the patches.
+def create_patch_metadata(
+    tile_pairs: list[dict], num_temporal_length: int, patch_size: int, patch_stride: int
+) -> list[dict]:
+    total_patches = 0
+    tile_patch_counts = []
 
-    Parameters
-    ----------
-    tile_paths : list[Path]
-        List of tile paths to extract patches from.
-    dates : list[datetime.datetime] | None, optional
-        List of dates to sort the patches by. If None, the patches will keep the order of the tile paths.
+    for tile_pair in tile_pairs:
+        try:
+            chosen_pre_flood_paths = choose_pre_flood_paths(
+                tile_pair["pre_flood_paths"], num_temporal_length=num_temporal_length
+            )
+            all_image_paths = chosen_pre_flood_paths + [tile_pair["post_flood_path"]]
 
-    Returns
-    -------
-    list[list[np.ndarray]]
-        List of patch sequences, where each sequence contains patches from all time steps at the same spatial location.
-    """
+            min_height, min_width = float("inf"), float("inf")
 
-    if dates:
-        # sort tile paths by dates
-        tile_paths, _ = zip(*sorted(zip(tile_paths, dates), key=lambda x: x[1]))
+            for img_path in all_image_paths:
+                img_height, img_width = get_image_size(img_path)
+                min_height = min(min_height, img_height)
+                min_width = min(min_width, img_width)
 
-    images_data = []
-    min_height, min_width = float("inf"), float("inf")
-    for img_path in tile_paths:
-        if format == "geotiff":
+            if min_height < patch_size or min_width < patch_size:
+                continue
+
+            max_i = min_height - patch_size + 1
+            max_j = min_width - patch_size + 1
+            patch_count = len(range(0, max_i, patch_stride)) * len(range(0, max_j, patch_stride))
+            tile_patch_counts.append(
+                (
+                    {
+                        "tile_id": tile_pair["tile_id"],
+                        "site": tile_pair["site"],
+                        "pre_flood_paths": chosen_pre_flood_paths,
+                        "post_flood_path": tile_pair["post_flood_path"],
+                        "ground_truth_path": tile_pair["ground_truth_path"],
+                    },
+                    min_height,
+                    min_width,
+                    max_i,
+                    max_j,
+                    patch_count,
+                )
+            )
+            total_patches += patch_count
+        except Exception:
+            tile_patch_counts.append(None)
+
+    patch_metadata = [None] * total_patches
+
+    idx = 0
+    for tile_data in tile_patch_counts:
+        if tile_data is None:
+            continue
+
+        tile_pair, min_height, min_width, max_i, max_j, patch_count = tile_data
+
+        for i in range(0, max_i, patch_stride):
+            for j in range(0, max_j, patch_stride):
+                patch_metadata[idx] = {
+                    "tile_pair": tile_pair,
+                    "patch_coords": (i, j),
+                    "img_dims": (min_height, min_width),
+                }
+                idx += 1
+
+            # for i in range(0, max_i, self.patch_stride):
+            #     for j in range(0, max_j, self.patch_stride):
+            #         patch_metadata.append(
+            #             {"tile_pair": tile_pair, "patch_coords": (i, j), "img_dims": (min_height, min_width)}
+            #         )
+
+    return patch_metadata
+
+
+def extract_patches_at_coords(
+    image_paths: list[Path | str],
+    patch_coords: tuple[int, int],
+    patch_size: int,
+    vv_clipped_range: tuple[float, float] | None = None,
+    vh_clipped_range: tuple[float, float] | None = None,
+) -> list[np.ndarray]:
+    patches = []
+    i, j = patch_coords
+
+    for img_path in image_paths:
+        if isinstance(img_path, str):
+            img_path = Path(img_path)
+
+        if img_path.suffix == ".tif":
             with rasterio.open(img_path) as src:
                 data = src.read()
                 data = np.transpose(data, (1, 2, 0))
-        elif format == "numpy":
+        elif img_path.suffix == ".npy":
             data = np.load(img_path)
         else:
-            raise ValueError(f"Invalid format: {format}")
+            raise ValueError(f"Invalid format: {img_path}")
 
-        images_data.append(data)
-        height, width = data.shape[:2]
-        min_height = min(min_height, height)
-        min_width = min(min_width, width)
+        if vv_clipped_range is not None:
+            # handle nan values
+            vv_band = data[:, :, 0].copy()
+            vv_band = np.where(np.isnan(vv_band), vv_clipped_range[0], vv_band)
+            data[:, :, 0] = np.clip(
+                (vv_band - vv_clipped_range[0]) / (vv_clipped_range[1] - vv_clipped_range[0]),
+                0,
+                1,
+            )
+        if vh_clipped_range is not None:
+            vh_band = data[:, :, 1].copy()
+            vh_band = np.where(np.isnan(vh_band), vh_clipped_range[0], vh_band)
+            data[:, :, 1] = np.clip(
+                (vh_band - vh_clipped_range[0]) / (vh_clipped_range[1] - vh_clipped_range[0]),
+                0,
+                1,
+            )
 
-    if min_height < patch_size or min_width < patch_size:
-        raise TileTooSmallError(f"Tile {tile_paths[0].parent.name} is too small ({min_height}x{min_width})")
+        patch = data[i : i + patch_size, j : j + patch_size, :]
+        patches.append(patch)
 
-    num_patches_x = (min_width - patch_size) // patch_stride + 1
-    num_patches_y = (min_height - patch_size) // patch_stride + 1
+    return patches
 
-    all_patch_sequences = []
 
-    for y_idx in range(num_patches_y):
-        for x_idx in range(num_patches_x):
-            start_y = y_idx * patch_stride
-            start_x = x_idx * patch_stride
-            patch_sequence = []
-            for data in images_data:
-                patch = data[start_y : start_y + patch_size, start_x : start_x + patch_size, :]
-                patch_sequence.append(patch)
-            all_patch_sequences.append(patch_sequence)
+def extract_patches_to_binary(
+    patch_metadata: list[dict],
+    patch_size: int,
+    output_path: Path,
+    num_temporal_length: int,
+    vv_clipped_range: tuple[float, float] | None = None,
+    vh_clipped_range: tuple[float, float] | None = None,
+    transform: Callable | None = None,
+    batch_size: int = 1000,
+) -> None:
+    num_samples = len(patch_metadata)
 
-    return all_patch_sequences
+    # Create memory-mapped array with fixed shape
+    # Shape: (num_samples, max_temporal_length + 1, patch_size, patch_size, 2)
+    # Last index is for post-flood image
+    memmap_array = np.memmap(
+        output_path,
+        dtype=np.float32,
+        mode="w+",
+        shape=(num_samples, num_temporal_length + 1, patch_size, patch_size, 2),
+    )
+
+    print(f"Created memory-mapped file: {output_path}")
+    print(f"Shape: {memmap_array.shape}")
+    print(f"Size: {memmap_array.nbytes / (1024**3):.2f} GB")
+
+    with Progress() as progress:
+        # Calculate total number of batches correctly (using ceiling division)
+        total_batches = (num_samples + batch_size - 1) // batch_size
+        batch_task = progress.add_task("Processing batches", total=total_batches)
+        sample_task = progress.add_task("Extracting patches per batch", total=batch_size)
+
+        # Process in batches to manage memory
+        for batch_start in range(0, num_samples, batch_size):
+            batch_end = min(batch_start + batch_size, num_samples)
+
+            print(
+                f"Processing batch {batch_start // batch_size + 1}/{total_batches}: "
+                f"samples {batch_start} to {batch_end - 1}"
+            )
+
+            progress.update(sample_task, completed=0)
+            for idx in range(batch_start, batch_end):
+                patch_meta = patch_metadata[idx]
+                tile_pair = patch_meta["tile_pair"]
+                patch_coords = patch_meta["patch_coords"]
+
+                # Extract pre-flood patches
+                pre_flood_patches = extract_patches_at_coords(
+                    tile_pair["pre_flood_paths"],
+                    patch_coords,
+                    patch_size=patch_size,
+                    vv_clipped_range=vv_clipped_range,
+                    vh_clipped_range=vh_clipped_range,
+                )
+
+                # Extract post-flood patch
+                post_flood_patches = extract_patches_at_coords(
+                    [tile_pair["post_flood_path"]],
+                    patch_coords,
+                    patch_size=patch_size,
+                    vv_clipped_range=vv_clipped_range,
+                    vh_clipped_range=vh_clipped_range,
+                )
+
+                # Make arrays contiguous
+                pre_flood_patches = [np.ascontiguousarray(p) for p in pre_flood_patches]
+                post_flood_patches = [np.ascontiguousarray(p) for p in post_flood_patches]
+
+                # Pre-allocate arrays for this sample
+                num_pre_flood = len(pre_flood_patches)
+
+                # Fill pre-flood patches (pad with zeros if fewer than max_temporal_length)
+                for i, patch in enumerate(pre_flood_patches):
+                    memmap_array[idx, i] = patch
+
+                # Fill remaining pre-flood slots with zeros if needed
+                for i in range(num_pre_flood, num_temporal_length):
+                    memmap_array[idx, i] = 0
+
+                # Fill post-flood patch (always at the last index)
+                memmap_array[idx, num_temporal_length] = post_flood_patches[0]
+
+                # Apply transform if provided
+                if transform:
+                    # Transform operates on the entire sample
+                    sample = memmap_array[idx]  # Shape: (max_temporal_length + 1, patch_size, patch_size, 2)
+                    transformed_sample = transform(sample)
+                    memmap_array[idx] = transformed_sample
+                progress.update(sample_task, advance=1)
+
+            # Flush batch to disk by deleting and recreating memmap
+            # print("Flushing batch to disk...")
+            del memmap_array
+            memmap_array = np.memmap(
+                output_path,
+                dtype=np.float32,
+                mode="r+",
+                shape=(num_samples, num_temporal_length + 1, patch_size, patch_size, 2),
+            )
+            progress.update(batch_task, advance=1)
+    # Final cleanup
+    del memmap_array
+    print(f"Successfully saved {num_samples} samples to {output_path}")
+
+
+if __name__ == "__main__":
+    from flood_detection_core.config import CLVAEConfig, DataConfig
+    from flood_detection_core.data.processing.split import get_flood_event_tile_pairs
+
+    data_config = DataConfig.from_yaml(Path("yamls/data.yaml"))
+    clvae_config = CLVAEConfig.from_yaml(Path("yamls/model_clvae.yaml"))
+
+    patch_size = clvae_config.site_specific.patch_size
+    patch_stride = clvae_config.site_specific.patch_stride
+
+    tile_pairs = get_flood_event_tile_pairs(
+        dataset_type="train",
+        pre_flood_split_csv_path=data_config.splits.pre_flood_split,
+        post_flood_split_csv_path=data_config.splits.post_flood_split,
+    )
+    patch_metadata = create_patch_metadata(
+        tile_pairs=tile_pairs,
+        num_temporal_length=clvae_config.site_specific.num_temporal_length,
+        patch_size=patch_size,
+        patch_stride=patch_stride,
+    )
+    extract_patches_to_binary(
+        patch_metadata=patch_metadata,
+        patch_size=patch_size,
+        output_path=f"data/train_patches_{patch_size}_{patch_stride}.dat",
+        num_temporal_length=clvae_config.site_specific.num_temporal_length,
+        vv_clipped_range=clvae_config.site_specific.vv_clipped_range,
+        vh_clipped_range=clvae_config.site_specific.vh_clipped_range,
+        transform=lambda x: augment_data(x, clvae_config.augmentation, False),
+        batch_size=10000,
+    )
