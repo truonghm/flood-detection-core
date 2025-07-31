@@ -10,8 +10,7 @@ from torch.utils.data import Dataset
 
 from flood_detection_core.data.constants import HandLabeledSen1Flood11Sites
 from flood_detection_core.data.loaders.tif import get_image_size
-
-FloodPathsType = dict[str, dict[str, list[Path]]]
+from flood_detection_core.data.processing.split import get_flood_event_tile_pairs
 
 
 def get_image_size_v2(file_path: Path) -> tuple[int, int]:
@@ -38,10 +37,9 @@ class FloodEventDataset(Dataset):
 
     def __init__(
         self,
-        pre_flood_dir: Path,
-        pre_flood_format: Literal["numpy", "geotiff"],
-        post_flood_dir: Path,
-        post_flood_format: Literal["numpy", "geotiff"],
+        dataset_type: Literal["train", "val", "test", "pretrain"],
+        pre_flood_split_csv_path: Path,
+        post_flood_split_csv_path: Path,
         sites: list[str] = HandLabeledSen1Flood11Sites,
         num_temporal_length: int = 4,
         patch_size: int = 16,
@@ -50,10 +48,8 @@ class FloodEventDataset(Dataset):
         vv_clipped_range: tuple[float, float] | None = None,
         vh_clipped_range: tuple[float, float] | None = None,
     ) -> None:
-        self.pre_flood_dir = pre_flood_dir
-        self.pre_flood_format = pre_flood_format
-        self.post_flood_dir = post_flood_dir
-        self.post_flood_format = post_flood_format
+        self.pre_flood_split_csv_path = pre_flood_split_csv_path
+        self.post_flood_split_csv_path = post_flood_split_csv_path
         self.num_temporal_length = num_temporal_length
         self.patch_size = patch_size
         self.patch_stride = patch_stride
@@ -61,72 +57,14 @@ class FloodEventDataset(Dataset):
         self.sites = sites
         self.vv_clipped_range = vv_clipped_range
         self.vh_clipped_range = vh_clipped_range
+        self.dataset_type = dataset_type
 
-        self.pre_flood_paths = self._get_pre_flood_paths()
-        self.post_flood_paths = self._get_post_flood_paths(self.pre_flood_paths)
-        self.tile_pairs = self._create_tile_pairs(self.pre_flood_paths, self.post_flood_paths)
+        self.tile_pairs = get_flood_event_tile_pairs(
+            dataset_type=dataset_type,
+            pre_flood_split_csv_path=self.pre_flood_split_csv_path,
+            post_flood_split_csv_path=self.post_flood_split_csv_path,
+        )
         self.patch_metadata = self._create_patch_metadata()
-
-    def _get_pre_flood_paths(self) -> FloodPathsType:
-        site_path_mapping = {}
-        for site in self.sites:
-            tile_path_mapping = {}
-            for tile_dir in self.pre_flood_dir.glob(f"{site}/*/"):
-                tile_paths = []
-                tile_dates = []
-                for tile_path in tile_dir.glob("*.tif"):
-                    img_date = datetime.datetime.strptime(tile_path.stem.split("_")[-1].replace(".tif", ""), "%Y-%m-%d")
-                    tile_paths.append(tile_path)
-                    tile_dates.append(img_date)
-
-                tile_paths, tile_dates = zip(*sorted(zip(tile_paths, tile_dates), key=lambda x: x[1]))
-                tile_paths = list(tile_paths)[: self.num_temporal_length]
-                tile_path_mapping[tile_dir.name] = tile_paths
-
-            site_path_mapping[site] = tile_path_mapping
-
-        return site_path_mapping
-
-    def _get_post_flood_paths(self, pre_flood_paths: FloodPathsType) -> FloodPathsType:
-        site_path_mapping = {}
-        for site, tile_path_mapping in pre_flood_paths.items():
-            site_path_mapping[site] = {}
-            for tile_id in tile_path_mapping.keys():
-                post_flood_path = list(self.post_flood_dir.glob(f"{tile_id}_*.tif"))
-                site_path_mapping[site][tile_id] = post_flood_path
-
-        return site_path_mapping
-
-    def _extract_tile_id(self, path: Path) -> str:
-        stem = path.stem
-
-        if "_S1Hand" in stem or "_S1Weak" in stem:
-            return "_".join(stem.split("_")[:2])
-        elif "pre_flood_" in stem:
-            return path.parent.name
-        else:
-            parts = stem.split("_")
-            if len(parts) >= 2:
-                return "_".join(parts[:2])
-            else:
-                return stem
-
-    def _create_tile_pairs(self, pre_flood_paths: FloodPathsType, post_flood_paths: FloodPathsType) -> list[dict]:
-        tile_pairs = []
-
-        for site, tile_path_mapping in pre_flood_paths.items():
-            for tile_id, tile_paths in tile_path_mapping.items():
-                post_flood_path = post_flood_paths[site][tile_id]
-                tile_pairs.append(
-                    {
-                        "tile_id": tile_id,
-                        "pre_flood_paths": [str(path.absolute()) for path in tile_paths],
-                        "post_flood_path": str(post_flood_path[0].absolute()),
-                        "site": site,
-                    }
-                )
-
-        return tile_pairs
 
     def _create_patch_metadata(self) -> list[dict]:
         total_patches = 0
@@ -191,9 +129,8 @@ class FloodEventDataset(Dataset):
 
     def _extract_patches_at_coords(
         self,
-        image_paths: list[Path],
+        image_paths: list[Path | str],
         patch_coords: tuple[int, int],
-        format: str,
         vv_clipped_range: tuple[float, float] | None = None,
         vh_clipped_range: tuple[float, float] | None = None,
     ) -> list[np.ndarray]:
@@ -201,14 +138,14 @@ class FloodEventDataset(Dataset):
         i, j = patch_coords
 
         for img_path in image_paths:
-            if format == "geotiff":
+            if img_path.endswith(".tif"):
                 with rasterio.open(img_path) as src:
                     data = src.read()
                     data = np.transpose(data, (1, 2, 0))
-            elif format == "numpy":
+            elif img_path.endswith(".npy"):
                 data = np.load(img_path)
             else:
-                raise ValueError(f"Invalid format: {format}")
+                raise ValueError(f"Invalid format: {img_path}")
 
             if vv_clipped_range is not None:
                 # handle nan values
@@ -241,14 +178,11 @@ class FloodEventDataset(Dataset):
         tile_pair = patch_meta["tile_pair"]
         patch_coords = patch_meta["patch_coords"]
 
-        pre_flood_patches = self._extract_patches_at_coords(
-            tile_pair["pre_flood_paths"], patch_coords, self.pre_flood_format
-        )
+        pre_flood_patches = self._extract_patches_at_coords(tile_pair["pre_flood_paths"], patch_coords)
 
         post_flood_patches = self._extract_patches_at_coords(
             [tile_pair["post_flood_path"]],
             patch_coords,
-            self.post_flood_format,
             vv_clipped_range=self.vv_clipped_range,
             vh_clipped_range=self.vh_clipped_range,
         )
@@ -264,3 +198,30 @@ class FloodEventDataset(Dataset):
         post_flood_tensor = torch.from_numpy(post_flood_patches_numpy).float()
 
         return pre_flood_tensor, post_flood_tensor
+
+
+if __name__ == "__main__":
+    from torch.utils.data import DataLoader
+
+    from flood_detection_core.config import CLVAEConfig, DataConfig
+
+    data_config = DataConfig.from_yaml("./yamls/data.yaml")
+    model_config = CLVAEConfig.from_yaml("./yamls/model_clvae.yaml")
+
+    train_dataset = FloodEventDataset(
+        dataset_type="train",
+        pre_flood_split_csv_path=data_config.splits.pre_flood_split,
+        post_flood_split_csv_path=data_config.splits.post_flood_split,
+        sites=["mekong"],
+        num_temporal_length=model_config.site_specific.num_temporal_length,
+        patch_size=model_config.site_specific.patch_size,
+        patch_stride=model_config.site_specific.patch_stride,
+        vv_clipped_range=model_config.site_specific.vv_clipped_range,
+        vh_clipped_range=model_config.site_specific.vh_clipped_range,
+    )
+
+    dataloader = DataLoader(train_dataset, batch_size=32, shuffle=True)
+
+    train_data = next(iter(dataloader))
+
+    print(train_data[0].shape, train_data[1].shape)

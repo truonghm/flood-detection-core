@@ -1,6 +1,5 @@
 from collections.abc import Callable
 from pathlib import Path
-from typing import Literal
 
 import numpy as np
 import torch
@@ -22,13 +21,11 @@ class PretrainDataset(Dataset):
 
     def __init__(
         self,
-        pre_flood_dir: Path,
-        pre_flood_format: Literal["numpy", "geotiff"],
+        split_csv_path: Path,
         pretrain_dir: Path,
         num_patches: int = 100,
         num_temporal_length: int = 4,
         patch_size: int = 16,
-        replacement: bool = False,
         transform: Callable | None = None,
     ) -> None:
         self.pretrain_dir = pretrain_dir
@@ -37,14 +34,12 @@ class PretrainDataset(Dataset):
         self.num_temporal_length = num_temporal_length
         self.transform = transform
         self.patches_extractor = PreTrainPatchesExtractor(
-            input_dir=pre_flood_dir,
-            input_format=pre_flood_format,
+            split_csv_path=split_csv_path,
             output_dir=self.pretrain_dir,
             num_patches=num_patches,
             num_temporal_length=num_temporal_length,
             patch_size=patch_size,
             patch_stride=16,
-            replacement=replacement,
         )
 
     def __len__(self) -> int:
@@ -71,13 +66,11 @@ if __name__ == "__main__":
     model_config = CLVAEConfig.from_yaml("./yamls/model_clvae.yaml")
 
     pretrain_dataset = PretrainDataset(
-        pre_flood_dir=data_config.gee.pre_flood_dir,
-        pre_flood_format="geotiff",
+        split_csv_path=data_config.splits.pre_flood_split,
         pretrain_dir=data_config.gee.pretrain_dir,
         num_patches=model_config.pretrain.num_patches,
         num_temporal_length=model_config.pretrain.num_temporal_length,
         patch_size=model_config.pretrain.patch_size,
-        replacement=model_config.pretrain.replacement,
     )
 
     pretrain_dataloader = DataLoader(pretrain_dataset, batch_size=32, shuffle=True)

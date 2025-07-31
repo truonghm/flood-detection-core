@@ -72,8 +72,8 @@ def site_specific_train(
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    if not data_config.artifact.pretrain_dir.exists():
-        data_config.artifact.pretrain_dir.mkdir(parents=True, exist_ok=True)
+    if not data_config.artifact.site_specific_dir.exists():
+        data_config.artifact.site_specific_dir.mkdir(parents=True, exist_ok=True)
 
     config = dict(
         input_channels=kwargs.get("input_channels", model_config.site_specific.input_channels),
@@ -104,7 +104,7 @@ def site_specific_train(
         print(f"  {k}: {v}")
 
     current_date = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    model_dir = data_config.artifact.pretrain_dir / f"site_specific_{site_name}_{current_date}"
+    model_dir = data_config.artifact.site_specific_dir / f"site_specific_{site_name}_{current_date}"
     model_dir.mkdir(parents=True, exist_ok=True)
 
     with open(model_dir / "config.json", "w") as f:
@@ -133,11 +133,10 @@ def site_specific_train(
         state_dict = torch.load(pretrained_path, map_location=device)
         model.load_state_dict(state_dict["model_state"])
 
-    dataset = FloodEventDataset(
-        pre_flood_dir=data_config.gee.pre_flood_dir,
-        pre_flood_format="geotiff",
-        post_flood_dir=data_config.hand_labeled_sen1flood11.post_flood_s1,
-        post_flood_format="geotiff",
+    train_dataset = FloodEventDataset(
+        dataset_type="train",
+        pre_flood_split_csv_path=data_config.splits.pre_flood_split,
+        post_flood_split_csv_path=data_config.splits.post_flood_split,
         sites=[site_name],
         num_temporal_length=config["num_temporal_length"],
         patch_size=config["patch_size"],
@@ -146,15 +145,24 @@ def site_specific_train(
         vv_clipped_range=config.get("vv_clipped_range", model_config.site_specific.vv_clipped_range),
         vh_clipped_range=config.get("vh_clipped_range", model_config.site_specific.vh_clipped_range),
     )
-
-    train_size = int(0.8 * len(dataset))
-    val_size = len(dataset) - train_size
+    val_dataset = FloodEventDataset(
+        dataset_type="val",
+        pre_flood_split_csv_path=data_config.splits.pre_flood_split,
+        post_flood_split_csv_path=data_config.splits.post_flood_split,
+        sites=[site_name],
+        num_temporal_length=config["num_temporal_length"],
+        patch_size=config["patch_size"],
+        patch_stride=config["patch_stride"],
+        transform=lambda x: augment_data(x, model_config.augmentation, False),
+        vv_clipped_range=config.get("vv_clipped_range", model_config.site_specific.vv_clipped_range),
+        vh_clipped_range=config.get("vh_clipped_range", model_config.site_specific.vh_clipped_range),
+    )
+    train_size = len(train_dataset)
+    val_size = len(val_dataset)
     print(f"Site {site_name} - Train size: {train_size}, Val size: {val_size}")
 
     if train_size == 0 or val_size == 0:
-        raise ValueError(f"Insufficient data for site {site_name}. Total samples: {len(dataset)}")
-
-    train_dataset, val_dataset = torch.utils.data.random_split(dataset, [train_size, val_size])
+        raise ValueError(f"Insufficient data for site {site_name}. Total samples: {len(train_dataset)}")
 
     train_loader = DataLoader(train_dataset, batch_size=config["batch_size"], shuffle=True)
     val_loader = DataLoader(val_dataset, batch_size=config["batch_size"], shuffle=False)

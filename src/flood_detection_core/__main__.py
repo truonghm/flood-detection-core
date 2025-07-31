@@ -147,5 +147,26 @@ def site_specific_train(
         )
 
 
+@app.command()
+def split_data(
+    data_config_path: Annotated[str, typer.Option("--data-config-path")] = default_data_config_path,
+    train_size: Annotated[float, typer.Option("--train-size")] = 0.5,
+    validation_size: Annotated[float, typer.Option("--validation-size")] = 0.2,
+    test_size: Annotated[float, typer.Option("--test-size")] = 0.2,
+    pretrain_size: Annotated[float, typer.Option("--pretrain-size")] = 0.1,
+) -> None:
+    from flood_detection_core.config import DataConfig
+    from flood_detection_core.data.processing.split import SplitRatio, split_data
+
+    data_config = DataConfig.from_yaml(data_config_path)
+    split_ratio = SplitRatio(
+        pretrain=pretrain_size,
+        train=train_size,
+        validation=validation_size,
+        test=test_size,
+    )
+    split_data(data_config, split_ratio)
+
+
 if __name__ == "__main__":
     app()

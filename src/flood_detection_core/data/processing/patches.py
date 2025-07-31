@@ -13,8 +13,10 @@ TODO: Rework this module completely
     - Can be used for both pretraining and normal training (FloodEventDataset).
 """
 
+import csv
 import datetime
 import random
+import re
 from pathlib import Path
 from typing import Literal
 
@@ -33,8 +35,6 @@ class TileTooSmallError(Exception):
 def get_img_path(tile_dir: Path, idx: int, extension: str = "tif") -> tuple[Path, datetime.datetime]:
     if idx == 0:
         raise ValueError("idx starts with 1")
-    if idx > len(list(tile_dir.glob(f"*.{extension}"))):
-        raise ValueError(f"idx {idx} is out of range")
     paths = list(tile_dir.glob(f"pre_flood_{idx}_*.{extension}"))
     if len(paths) != 1:
         raise ValueError(f"Expected 1 path, got {len(paths)}")
@@ -50,100 +50,71 @@ def get_patches_cache_key(num_patches: int, num_temporal_length: int, patch_size
 class PreTrainPatchesExtractor:
     def __init__(
         self,
-        input_dir: Path,
-        input_format: Literal["geotiff", "numpy"],
+        split_csv_path: Path,
         output_dir: Path,
         num_patches: int = 100,
         num_temporal_length: int = 4,
         patch_size: int = 16,
         patch_stride: int = 16,
-        replacement: bool = False,
-        stratified: bool = True,
     ) -> None:
-        self.input_dir = input_dir
+        self.split_csv_path = split_csv_path
         self.num_patches = num_patches
         self.num_temporal_length = num_temporal_length
         self.patch_size = patch_size
         self.patch_stride = patch_stride
-        self.replacement = replacement
-        self.stratified = stratified
         self.cache_key = get_patches_cache_key(
             self.num_patches, self.num_temporal_length, self.patch_size, self.patch_stride
         )
+        self.chosen_tile_paths = self.get_random_tile_paths(self.load_pre_flood_split_csv(self.split_csv_path))
         self.cache_dir = output_dir / self.cache_key
-        self.selected_tile_dirs = (
-            self.get_site_stratified_tile_dirs() if self.stratified else self.get_random_tile_dirs()
-        )
-        if input_format == "numpy":
-            self.extension = "npy"
-        elif input_format == "geotiff":
-            self.extension = "tif"
-        else:
-            raise ValueError(f"Invalid output format: {input_format}")
 
-    @property
-    def all_tile_dirs(self) -> list[Path]:
-        return list(self.input_dir.glob("*/*/"))
+    def load_pre_flood_split_csv(self, split_csv_path: Path) -> dict[str, list[Path]]:
+        data = {}
+        with open(split_csv_path) as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                if row["dataset_type"] == "pretrain":
+                    # data.append(row)
+                    if row["tile"] not in data:
+                        data[row["tile"]] = []
+                    data[row["tile"]].append(row["path"])
+        return data
 
-    def get_random_tile_dirs(self) -> list[Path]:
-        if self.replacement:
-            return random.choices(self.all_tile_dirs, k=self.num_patches)
-        else:
-            return random.sample(self.all_tile_dirs, k=self.num_patches)
+    def get_random_tile_paths(self, tile_paths_mapping: dict[str, list[Path]]) -> dict[str, list[Path]]:
+        chosen_tiles = random.choices(list(tile_paths_mapping.keys()), k=self.num_patches)
+        chosen_tile_paths = {tile: tile_paths_mapping[tile] for tile in chosen_tiles}
+        return chosen_tile_paths
 
-    def get_site_stratified_tile_dirs(self) -> list[Path]:
-        """Sample tiles with equal probability per site"""
-        sites = {}
-        for tile_dir in self.all_tile_dirs:
-            site_name = tile_dir.parent.name
-            if site_name not in sites:
-                sites[site_name] = []
-            sites[site_name].append(tile_dir)
-
-        patches_per_site = self.num_patches // len(sites)
-        remainder = self.num_patches % len(sites)
-
-        selected_tiles = []
-        for i, (site_name, site_tiles) in enumerate(sites.items()):
-            n_from_site = patches_per_site + (1 if i < remainder else 0)
-            if self.replacement:
-                selected_tiles.extend(random.choices(site_tiles, k=n_from_site))
-            else:
-                selected_tiles.extend(random.sample(site_tiles, k=min(n_from_site, len(site_tiles))))
-
-        return selected_tiles
-
-    def extract_one_sequence(self, tile_dir: Path) -> list[np.ndarray] | None:
-        ts_length = len(list(tile_dir.glob(f"*.{self.extension}")))
+    def extract_one_sequence(self, tile_name: str, paths: list[Path]) -> list[np.ndarray] | None:
+        ts_length = len(paths)
         n_ts_length = self.num_temporal_length
+        path_indices = [int(re.search(r"pre_flood_(\d+)_", path.name).group(1)) for path in paths]
+
+        # sort paths based on indices
+        sorted_paths = [path for _, path in sorted(zip(path_indices, paths))]
+
         if ts_length < n_ts_length:
             raise NotEnoughImagesError(
-                f"Tile {tile_dir.name} has fewer than {n_ts_length} images ({ts_length} < {n_ts_length})"
+                f"Tile {tile_name} has fewer than {n_ts_length} images ({ts_length} < {n_ts_length})"
             )
 
-        # randomly pick 4 CONSECUTIVE images
+        # randomly pick n_ts_length CONSECUTIVE images
         ts_start_idx = random.randint(1, ts_length - n_ts_length)
         ts_end_idx = ts_start_idx + n_ts_length - 1
 
-        chosen_tile_paths = []
-        chosen_dates = []
-        for i in range(ts_start_idx, ts_end_idx + 1):
-            img_path, img_date = get_img_path(tile_dir, i)
-            chosen_tile_paths.append(img_path)
-            chosen_dates.append(img_date)
-
-        # sort by date
-        chosen_tile_paths, chosen_dates = zip(*sorted(zip(chosen_tile_paths, chosen_dates), key=lambda x: x[1]))
+        chosen_tile_paths = sorted_paths[ts_start_idx : ts_end_idx]
 
         images_data = []
         min_height, min_width = float("inf"), float("inf")
         for img_path in chosen_tile_paths:
-            if self.extension == "tif":
+            if img_path.suffix == ".tif":
                 with rasterio.open(img_path) as src:
                     data = src.read()
                     data = np.transpose(data, (1, 2, 0))
-            else:
+            elif img_path.suffix == ".npy":
                 data = np.load(img_path)
+            else:
+                raise ValueError(f"Invalid extension: {img_path.suffix}")
 
             images_data.append(data)
             height, width = data.shape[:2]
@@ -152,7 +123,7 @@ class PreTrainPatchesExtractor:
 
         patch_size = self.patch_size
         if min_height < patch_size or min_width < patch_size:
-            raise TileTooSmallError(f"Tile {tile_dir.name} is too small ({min_height}x{min_width})")
+            raise TileTooSmallError(f"Tile {tile_name} is too small ({min_height}x{min_width})")
 
         start_y = random.randint(0, min_height - patch_size)
         start_x = random.randint(0, min_width - patch_size)
@@ -184,13 +155,13 @@ class PreTrainPatchesExtractor:
                 shutil.rmtree(patch_cache_dir)
 
         if not patch_sequence:  # if cache didn't exist or was incomplete
-            tile_dir = random.choice(self.selected_tile_dirs)
+            tile_name = random.choice(list(self.chosen_tile_paths.keys()))
             while True:
                 try:
-                    patch_sequence = self.extract_one_sequence(tile_dir)
+                    patch_sequence = self.extract_one_sequence(tile_name, self.chosen_tile_paths[tile_name])
                     break
                 except (NotEnoughImagesError, TileTooSmallError):
-                    tile_dir = random.choice(self.selected_tile_dirs)
+                    tile_name = random.choice(list(self.chosen_tile_paths.keys()))
                     continue
 
         # only cache if we generated new data (not loaded from cache)

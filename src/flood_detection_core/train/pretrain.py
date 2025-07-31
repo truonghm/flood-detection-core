@@ -76,13 +76,11 @@ def pretrain(
     )
 
     dataset = PretrainDataset(
-        pre_flood_dir=data_config.gee.pre_flood_dir,
-        pre_flood_format="geotiff",
+        split_csv_path=data_config.splits.pre_flood_split,
         pretrain_dir=data_config.gee.pretrain_dir,
         num_patches=config["num_patches"],
         num_temporal_length=config["num_temporal_length"],
         patch_size=config["patch_size"],
-        replacement=config["replacement"],
         transform=lambda x: augment_data(x, model_config.augmentation, False),
     )
     train_size = int(0.8 * len(dataset))

@@ -59,6 +59,12 @@ class DataDirConfig(BaseModel):
 
 class ArtifactDirConfig(DataDirConfig):
     pretrain_dir: str | Path
+    site_specific_dir: str | Path
+
+
+class SplitDirConfig(DataDirConfig):
+    pre_flood_split: str | Path
+    post_flood_split: str | Path
 
 
 class GEEDataConfig(DataDirConfig):
@@ -149,6 +155,7 @@ class DataConfig(BaseSettingsWithYaml):
     gee: GEEDataConfig
     hand_labeled_sen1flood11: Sen1Flood11HandLabeledDataConfig
     artifact: ArtifactDirConfig
+    splits: SplitDirConfig
 
     @model_validator(mode="before")
     def validate_paths(cls, values):
@@ -161,7 +168,7 @@ class DataConfig(BaseSettingsWithYaml):
                 raise ValueError(f"Root path {root_path} does not exist")
 
             # Process both gee and sen1flood11 configs
-            for config_name in ["gee", "hand_labeled_sen1flood11", "artifact"]:
+            for config_name in ["gee", "hand_labeled_sen1flood11", "artifact", "splits"]:
                 config_values = values.get(config_name)
                 if config_values and isinstance(config_values, dict):
                     data_dir = config_values.get("data_dir")
