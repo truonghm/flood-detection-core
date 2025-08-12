@@ -1,3 +1,11 @@
+"""
+CLVAE Model Architecture Implementation
+
+This script implements the CLVAE (Contrastive ConvLSTM Variational AutoEncoder)
+model architecture as described in the model plan for unsupervised flood detection
+on SAR time series data.
+"""
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -14,6 +22,7 @@ class ConvLSTMCell(nn.Module):
         self.kernel_size = kernel_size
         padding = kernel_size // 2
 
+        # Combined convolution for all gates
         self.conv = nn.Conv2d(input_channels + hidden_channels, 4 * hidden_channels, kernel_size, padding=padding)
 
     def forward(self, x: torch.Tensor, h: torch.Tensor, c: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
@@ -21,13 +30,16 @@ class ConvLSTMCell(nn.Module):
         combined = torch.cat([x, h], dim=1)
         gates = self.conv(combined)
 
+        # Split gates
         i_gate, f_gate, o_gate, g_gate = torch.split(gates, self.hidden_channels, dim=1)
 
+        # Apply activations
         i_gate = torch.sigmoid(i_gate)
         f_gate = torch.sigmoid(f_gate)
         o_gate = torch.sigmoid(o_gate)
         g_gate = torch.tanh(g_gate)
 
+        # Update cell and hidden states
         c_new = f_gate * c + i_gate * g_gate
         h_new = o_gate * torch.tanh(c_new)
 
@@ -62,6 +74,7 @@ class ConvLSTM(nn.Module):
         assert x.dim() == 5, f"Expected 5D input (batch, time, channels, height, width), got {x.dim()}D"
         batch_size, time_steps, _, height, width = x.size()
 
+        # Initialize hidden and cell states
         h = torch.zeros(batch_size, self.hidden_channels, height, width, device=x.device)
         c = torch.zeros(batch_size, self.hidden_channels, height, width, device=x.device)
 
@@ -87,6 +100,7 @@ class ResidualBlock3D(nn.Module):
         self.conv3 = nn.Conv3d(out_channels, out_channels, kernel_size=3, stride=1, padding=1)
         self.bn3 = nn.BatchNorm3d(out_channels)
 
+        # Shortcut connection
         self.shortcut = nn.Sequential()
         if stride != 1 or in_channels != out_channels:
             self.shortcut = nn.Sequential(
@@ -105,6 +119,7 @@ class ResidualBlock3D(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Forward pass for residual block with optional gradient checkpointing."""
         if self.training and x.requires_grad:
+            # Use gradient checkpointing during training to save memory
             return torch.utils.checkpoint.checkpoint(self._forward_impl, x, use_reentrant=False)
         else:
             return self._forward_impl(x)
@@ -160,7 +175,9 @@ class ConvLSTMEncoder(nn.Module):
             Tuple of (mu, logvar) each of shape (batch, 128)
             If return_features=True, also returns list of intermediate features
         """
+        # Input validation
         assert x.dim() == 5, f"Expected 5D input (batch, time, height, width, channels), got {x.dim()}D"
+        # Require 16×16 spatial and 2 channels; allow variable time length T
         assert x.shape[2] == 16 and x.shape[3] == 16 and x.shape[4] == 2, (
             f"Expected spatial (16,16) and channels=2, got {x.shape}"
         )
@@ -222,8 +239,10 @@ class ConvLSTMDecoder(nn.Module):
         self.hidden_channels = hidden_channels
         self.output_channels = output_channels
 
+        # Dense layer to expand latent vector
         self.fc_expand = nn.Linear(latent_dim, 16 * 4 * 4)
 
+        # Transpose convolution layers
         self.conv_transpose1 = nn.ConvTranspose3d(16, 32, kernel_size=3, stride=2, padding=1, output_padding=1)
         self.bn1 = nn.BatchNorm3d(32)
 
@@ -233,8 +252,10 @@ class ConvLSTMDecoder(nn.Module):
         self.conv_transpose3 = nn.ConvTranspose3d(64, hidden_channels, kernel_size=3, stride=1, padding=1)
         self.bn3 = nn.BatchNorm3d(hidden_channels)
 
+        # Final ConvLSTM for temporal reconstruction
         self.convlstm = ConvLSTM(hidden_channels, output_channels, kernel_size=3)
 
+        # Final output layer
         self.final_conv = nn.Conv2d(output_channels, output_channels, kernel_size=1)
 
     def forward(
@@ -259,9 +280,11 @@ class ConvLSTMDecoder(nn.Module):
         -------
             Reconstructed tensor of shape (batch, 4, 16, 16, 2)
         """
+        # Input validation
         assert z.dim() == 2, f"Expected 2D latent vector (batch, latent_dim), got {z.dim()}D"
         batch_size = z.size(0)
 
+        # Expand latent vector
         out = F.relu(self.fc_expand(z))  # (batch, 16*4*4)
         out = out.view(batch_size, 16, 1, 4, 4)  # (batch, 16, 1, 4, 4)
 
@@ -297,10 +320,10 @@ class ConvLSTMDecoder(nn.Module):
         # ConvLSTM processing
         lstm_out = self.convlstm(lstm_input)  # (batch, T, 2, 16, 16)
 
-        # Apply final convolution to each time step
+        # Apply final convolution to each time step (logits output; no sigmoid here)
         outputs = []
         for t in range(lstm_out.size(1)):
-            frame_out = torch.sigmoid(self.final_conv(lstm_out[:, t]))
+            frame_out = self.final_conv(lstm_out[:, t])
             outputs.append(frame_out.unsqueeze(1))
 
         output = torch.cat(outputs, dim=1)  # (batch, T, 2, 16, 16)
@@ -323,11 +346,14 @@ class CLVAE(nn.Module):
 
         self.latent_dim = latent_dim
 
+        # Shared encoder and decoder
         self.encoder = ConvLSTMEncoder(input_channels, hidden_channels, latent_dim)
         self.decoder = ConvLSTMDecoder(latent_dim, hidden_channels, input_channels)
 
-        self.alpha = 0.1
-        self.beta = 0.7
+        # Loss weights (following paper's equation 1)
+        self.alpha = 0.1  # KL divergence weight
+        self.beta = 0.7  # Reconstruction loss weight
+        # Contrastive weight = (1 - alpha - beta) = 0.2
 
     def reparameterize(self, mu: torch.Tensor, logvar: torch.Tensor) -> torch.Tensor:
         """
@@ -363,9 +389,11 @@ class CLVAE(nn.Module):
         -------
             Tuple of (reconstruction, mu, logvar, latent_z)
         """
+        # Encode with optional feature extraction for skip connections
         if use_skip_connections:
             mu, logvar, encoder_features = self.encoder(x, return_features=True)
             z = self.reparameterize(mu, logvar)
+            # Match decoder temporal length to input sequence length
             target_T = x.shape[1]
             reconstruction = self.decoder(z, encoder_features, target_time_steps=target_T)
         else:
@@ -407,13 +435,10 @@ class CLVAE(nn.Module):
         """
         batch_size = x.size(0)
 
-        # Reconstruction loss (Binary Cross Entropy as per paper)
-        # Ensure numerical safety: inputs in (0,1), targets in [0,1], no NaNs/Infs
-        eps = 1e-7
-        reconstruction_safe = torch.clamp(reconstruction, eps, 1.0 - eps)
-        x_target = torch.clamp(x, 0.0, 1.0)
-        x_target = torch.nan_to_num(x_target, nan=0.0, posinf=1.0, neginf=0.0)
-        recon_loss = F.binary_cross_entropy(reconstruction_safe, x_target, reduction="sum") / batch_size
+        # Reconstruction loss (Binary Cross Entropy with logits, as per paper)
+        # Sum over pixels per sample, then average over batch to match common VAE practice
+        # Note: targets are expected in [0,1] per paper (pre-flood images normalized)
+        recon_loss = F.binary_cross_entropy_with_logits(reconstruction, x, reduction="sum") / batch_size
 
         # KL divergence loss
         kl_loss = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp()) / batch_size
