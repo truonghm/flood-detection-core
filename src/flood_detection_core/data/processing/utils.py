@@ -32,7 +32,7 @@ def choose_pre_flood_paths(paths: list[Path | str], num_temporal_length: int) ->
     path_indices = [int(re.search(r"pre_flood_(\d+)_", path.name).group(1)) for path in path_objs]
 
     # sort paths based on indices
-    sorted_paths = [path for _, path in sorted(zip(path_indices, paths))]
+    sorted_paths = [path for _, path in sorted(zip(path_indices, path_objs))]
 
     if ts_length < n_ts_length:
         raise NotEnoughImagesError(

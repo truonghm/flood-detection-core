@@ -51,7 +51,7 @@ def pretrain(
         num_patches=kwargs.get("num_patches", model_config.pretrain.num_patches),
         num_temporal_length=kwargs.get("num_temporal_length", model_config.pretrain.num_temporal_length),
         patch_size=kwargs.get("patch_size", model_config.pretrain.patch_size),
-        replacement=kwargs.get("replacement", model_config.pretrain.replacement),
+        early_stopping_patience=kwargs.get("early_stopping_patience", model_config.pretrain.early_stopping_patience),
     )
     if wandb_run:
         wandb_run.config.update(config)
@@ -94,7 +94,7 @@ def pretrain(
     start_epoch = 0
     best_val_loss = float("inf")
     patience_counter = 0
-    patience = 10
+    patience = config["early_stopping_patience"]
 
     if resume_checkpoint:
         resume_checkpoint = Path(resume_checkpoint)
@@ -177,6 +177,10 @@ def pretrain(
 
     print("Finish pre-training, best model info is saved at:")
     print(model_dir / "best_model_info.json")
+
+    with open(data_config.artifact.pretrain_dir / "latest_run.txt", "w") as f:
+        f.write(model_dir.name)
+
     return model, model_dir / "best_model_info.json"
 
 

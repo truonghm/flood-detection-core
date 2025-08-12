@@ -101,6 +101,39 @@ class GEEDownloader:
         )
 
     @staticmethod
+    def mosaic_by_unique_date(collection: ee.ImageCollection) -> ee.ImageCollection:
+        """
+        Mosaic images that share the same calendar date so that each date yields
+        a single image covering the AOI as completely as possible.
+
+        Returns an image collection where each image corresponds to one unique
+        date and carries a normalized `system:time_start` (00:00 UTC of that day)
+        and a `date` property in YYYY-MM-dd format.
+        """
+
+        def add_date(img: ee.Image) -> ee.Image:
+            date_str = ee.Date(img.get("system:time_start")).format("YYYY-MM-dd")
+            return img.set("date", date_str)
+
+        with_date = collection.map(add_date)
+        unique_dates = ee.List(with_date.aggregate_array("date").distinct())
+
+        def mosaic_for_date(d):
+            d = ee.String(d)
+            day_coll = with_date.filter(ee.Filter.eq("date", d))
+            first = ee.Image(day_coll.first())
+            time_start = ee.Date.parse("YYYY-MM-dd", d).millis()
+            mosaicked = day_coll.mosaic()
+            return (
+                mosaicked
+                .set("date", d)
+                .set("system:time_start", time_start)
+                .copyProperties(first, ["relativeOrbitNumber_start"])
+            )
+
+        return ee.ImageCollection(unique_dates.map(mosaic_for_date))
+
+    @staticmethod
     def to_numpy(
         image: ee.Image,
         aoi: ee.Geometry,
@@ -211,22 +244,57 @@ class SitePrefloodDataDownloader(GEEDownloader):
 
                 aoi = ee.Geometry.Rectangle(bbox)
 
-                pre_flood_collection = self.get_s1_collection(
-                    aoi,
-                    pre_flood_start_str,
-                    pre_flood_end_str,
-                    orbit_pass,
-                    relative_orbit,
-                )
+                # Build collection and progressively extend window backward until
+                # we have at least `num_pre_images` unique dates after mosaicking.
+                search_start_dt = pre_flood_start
+                earliest_s1_dt = datetime.datetime(2014, 10, 1)
+                extension_step_days = days_before_flood_max
 
-                collection_size = pre_flood_collection.size().getInfo()
+                def build_collection(start_dt: datetime.datetime) -> ee.ImageCollection:
+                    return self.get_s1_collection(
+                        aoi,
+                        start_dt.strftime("%Y-%m-%d"),
+                        pre_flood_end_str,
+                        orbit_pass,
+                        relative_orbit,
+                    )
+
+                while True:
+                    pre_flood_collection = build_collection(search_start_dt)
+                    mosaicked_by_date = self.mosaic_by_unique_date(pre_flood_collection)
+                    unique_dates_count = mosaicked_by_date.size().getInfo()
+
+                    if unique_dates_count >= num_pre_images:
+                        break
+
+                    if search_start_dt <= earliest_s1_dt:
+                        break
+
+                    prev_start = search_start_dt
+                    search_start_dt = max(
+                        earliest_s1_dt,
+                        prev_start - datetime.timedelta(days=extension_step_days),
+                    )
+                    print(
+                        "    Not enough unique dates "
+                        f"({unique_dates_count}/{num_pre_images}). Extending start date from "
+                        f"{prev_start.strftime('%Y-%m-%d')} to "
+                        f"{search_start_dt.strftime('%Y-%m-%d')}"
+                    )
+
+                mosaicked_by_date = self.mosaic_by_unique_date(build_collection(search_start_dt))
+                collection_size = mosaicked_by_date.size().getInfo()
                 if collection_size == 0:
                     print(f"    Warning: No pre-flood images found for tile {tile_id}")
                     continue
 
-                print(f"    Found {collection_size} pre-flood images with matching orbital parameters")
+                print(
+                    "    Found "
+                    f"{collection_size} unique pre-flood dates (after mosaicking by date) "
+                    "with matching orbital parameters"
+                )
 
-                pre_flood_images = pre_flood_collection.sort("system:time_start", False).limit(num_pre_images)
+                pre_flood_images = mosaicked_by_date.sort("system:time_start", False).limit(num_pre_images)
                 actual_count = min(num_pre_images, collection_size)
 
                 preprocessed_images = pre_flood_images.map(
@@ -240,7 +308,7 @@ class SitePrefloodDataDownloader(GEEDownloader):
                 tile_dir = site_dir / tile_id
                 tile_dir.mkdir(parents=True, exist_ok=True)
 
-                print(f"    Downloading {actual_count} pre-flood images for tile {tile_id}...")
+                print(f"    Downloading {actual_count} pre-flood images (unique dates) for tile {tile_id}...")
                 pre_flood_list = preprocessed_images.toList(actual_count)
 
                 downloaded_dates = []

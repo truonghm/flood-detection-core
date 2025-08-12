@@ -39,7 +39,6 @@ class PretrainDataset(Dataset):
             num_patches=num_patches,
             num_temporal_length=num_temporal_length,
             patch_size=patch_size,
-            patch_stride=16,
         )
 
     def __len__(self) -> int:

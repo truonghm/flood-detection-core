@@ -107,6 +107,8 @@ class TrainingManager:
         self,
         training_input: TrainingInput,
         use_wandb: bool = False,
+        pretrain_extra_tags: list[str] | None = None,
+        site_specific_extra_tags: list[str] | None = None,
     ):
         """
         How to set up TrainingInput:
@@ -157,7 +159,7 @@ class TrainingManager:
                 with wandb.init(
                     project=self.wandb_project,
                     name=self.wandb_pretrain_name,
-                    tags=self.wandb_tags + ["pretrain"],
+                    tags=self.wandb_tags + ["pretrain"] + (pretrain_extra_tags or []),
                 ) as run:
                     _, model_info_path = self.pretrain(
                         wandb_run=run, resume_checkpoint=training_input.pretrain.path, **training_input.pretrain.kwargs
@@ -167,7 +169,7 @@ class TrainingManager:
                     resume_checkpoint=training_input.pretrain.path, **training_input.pretrain.kwargs
                 )
 
-            with open(model_info_path, "r") as f:
+            with open(model_info_path) as f:
                 model_info = json.load(f)
             training_input.pretrain.path = model_info["checkpoint_path"]
 
@@ -197,7 +199,7 @@ class TrainingManager:
                 with wandb.init(
                     project=self.wandb_project,
                     name=self.wandb_site_specific_name,
-                    tags=self.wandb_tags + ["site-specific", site_name],
+                    tags=self.wandb_tags + ["site-specific", site_name] + (site_specific_extra_tags or []),
                 ) as run:
                     self.site_specific(site=site_name, wandb_run=run, **kwargs)
             else:
@@ -219,15 +221,18 @@ if __name__ == "__main__":
             },
         },
         "site_specific": [
-            {"site": "bolivia", "mode": "fresh", "path": None, "kwargs": {"max_epochs": 2}},
-            {"site": "mekong", "mode": "fresh", "path": None, "kwargs": {"max_epochs": 2}},
-            {"site": "somalia", "mode": "fresh", "path": None, "kwargs": {"max_epochs": 2}},
-            {"site": "spain", "mode": "fresh", "path": None, "kwargs": {"max_epochs": 2}},
+            {"site": "bolivia", "mode": "fresh", "path": None, "kwargs": {}},
+            {"site": "mekong", "mode": "fresh", "path": None, "kwargs": {}},
+            {"site": "somalia", "mode": "fresh", "path": None, "kwargs": {}},
+            {"site": "spain", "mode": "fresh", "path": None, "kwargs": {}},
         ],
     }
     training_input = TrainingInput(**training_input_raw)
 
     print(training_input)
 
+    # available wandb kwargs: https://docs.wandb.ai/ref/python/sdk/functions/init/
     training_manager = TrainingManager(data_config, model_config)
-    training_manager.run(training_input)
+    training_manager.run(
+        training_input=training_input,
+    )

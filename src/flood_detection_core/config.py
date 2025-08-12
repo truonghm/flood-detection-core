@@ -191,8 +191,6 @@ class CLVAEPretrainConfig(BaseModel):
     num_patches: int = 100
     num_temporal_length: int = 4
     patch_size: int = 16
-    patch_stride: int = 16
-    replacement: bool = False
     input_channels: int = 2
     hidden_channels: int = 64
     latent_dim: int = 128
@@ -201,6 +199,7 @@ class CLVAEPretrainConfig(BaseModel):
     scheduler_patience: int = 5
     scheduler_factor: float = 0.1
     scheduler_min_lr: float = 0.00001
+    early_stopping_patience: int = 10
     batch_size: int = 32
 
 
@@ -218,8 +217,23 @@ class CLVAESiteSpecificConfig(BaseModel):
     scheduler_min_lr: float = 0.00001
     batch_size: int = 32
     early_stopping_patience: int = 5
-    vv_clipped_range: tuple[float, float] = (-23.0, 0.0)
-    vh_clipped_range: tuple[float, float] = (-28.0, -5.0)
+    vv_clipped_range: tuple[float, float] | None = None
+    vh_clipped_range: tuple[float, float] | None = None
+    train_pair_sampling_strategy: Literal["all_pairs", "random"] = "all_pairs"
+    val_pair_sampling_strategy: Literal["all_pairs", "random"] = "all_pairs"
+    train_num_pairs_per_epoch: int = 2048
+    val_num_pairs_per_epoch: int = 512
+
+
+class CLVAEInferenceConfig(BaseModel):
+    num_temporal_length: int = 4
+    patch_size: int = 16
+    patch_stride: int = 1
+    pad_size: int = 8
+    batch_size: int = 512
+    threshold: float = 0.5
+    post_flood_vh_clipped_range: tuple[float, float] | None = None
+    post_flood_vv_clipped_range: tuple[float, float] | None = None
 
 
 class GeometricAugmentationConfig(BaseModel):
@@ -243,7 +257,7 @@ class CLVAEConfig(BaseSettingsWithYaml):
     pretrain: CLVAEPretrainConfig
     site_specific: CLVAESiteSpecificConfig
     augmentation: AugmentationConfig
-
+    inference: CLVAEInferenceConfig
     model_config = SettingsConfigDict(yaml_file=model_config_path)
 
 

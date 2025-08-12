@@ -9,8 +9,6 @@ from sklearn.model_selection import train_test_split
 from flood_detection_core.config import DataConfig
 from flood_detection_core.data.constants import HandLabeledSen1Flood11Sites
 
-from flood_detection_core.types import FloodPathsType
-
 
 @dataclass
 class SplitRatio:

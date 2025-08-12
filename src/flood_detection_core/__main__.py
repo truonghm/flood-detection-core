@@ -6,7 +6,7 @@ app = typer.Typer()
 
 default_data_config_path = "./yamls/data.yaml"
 default_model_config_path = "./yamls/model_clvae.yaml"
-default_download_config_path = "./yamls/download.yaml"
+default_download_config_path = "./yamls/gee.yaml"
 
 
 @app.command()
@@ -166,6 +166,41 @@ def split_data(
         test=test_size,
     )
     split_data(data_config, split_ratio)
+
+
+@app.command()
+def train(
+    data_config_path: Annotated[str, typer.Option("--data-config-path")] = default_data_config_path,
+    model_config_path: Annotated[str, typer.Option("--model-config-path")] = default_model_config_path,
+    use_wandb: Annotated[bool, typer.Option("--wandb/--no-wandb")] = True,
+    pretrain_extra_tags: Annotated[list[str], typer.Option("--pretrain-extra-tags")] = [],
+    site_specific_extra_tags: Annotated[list[str], typer.Option("--site-specific-extra-tags")] = [],
+) -> None:
+    from flood_detection_core.config import CLVAEConfig, DataConfig
+    from flood_detection_core.train.manager import TrainingInput, TrainingManager
+
+    data_config = DataConfig.from_yaml(data_config_path)
+    model_config = CLVAEConfig.from_yaml(model_config_path)
+
+    training_input_raw = {
+        "pretrain": {"mode": "fresh", "path": None},
+        "site_specific": [
+            {"site": "bolivia", "mode": "fresh", "path": None},
+            # {"site": "mekong", "mode": "fresh", "path": None},
+            # {"site": "somalia", "mode": "fresh", "path": None},
+            # {"site": "spain", "mode": "fresh", "path": None},
+        ],
+    }
+    training_input = TrainingInput(**training_input_raw)
+    print(training_input)
+
+    training_manager = TrainingManager(data_config, model_config)
+    training_manager.run(
+        training_input,
+        use_wandb=use_wandb,
+        pretrain_extra_tags=pretrain_extra_tags,
+        site_specific_extra_tags=site_specific_extra_tags,
+    )
 
 
 if __name__ == "__main__":

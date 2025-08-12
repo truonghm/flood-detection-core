@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 import torch
+import torch.nn.functional as F
 from rich import print
 from rich.progress import Progress
 from torch.utils.data import DataLoader
@@ -13,8 +14,7 @@ from torch.utils.data import DataLoader
 import wandb
 from wandb.sdk.wandb_run import Run
 from flood_detection_core.config import CLVAEConfig, DataConfig
-from flood_detection_core.data.datasets import FloodEventDataset
-from flood_detection_core.data.processing.augmentation import augment_data
+from flood_detection_core.data.datasets import SiteSpecificTrainingDataset
 from flood_detection_core.models.clvae import CLVAE
 
 
@@ -31,13 +31,17 @@ def site_specific_train(
     """
     Site-specific fine-tuning for each flood event using contrastive learning.
 
-    **Purpose**: Site-specific fine-tuning for each flood event
-    **Logic**:
+    Purpose
+    -------
+        Site-specific fine-tuning for each flood event
+
+    Logic
+    -----
     - Loads pre-trained weights from PreTrainingPipeline
-    - Uses FloodEventDataset for specific flood site
+    - Uses SiteSpecificTrainingDataset (pre-flood only) for the specified site
     - 25 epochs per flood site with early stopping (patience 5)
     - Learning rate: 0.0001 → 0.000001 (patience 3)
-    - Implements contrastive learning between pre/post flood representations using basic pairs from dataset
+    - Implements contrastive learning between two pre-flood sequences from different tiles
     - Saves site-specific model checkpoints
 
     Parameters
@@ -90,10 +94,21 @@ def site_specific_train(
         batch_size=kwargs.get("batch_size", model_config.site_specific.batch_size),
         num_temporal_length=kwargs.get("num_temporal_length", model_config.site_specific.num_temporal_length),
         patch_size=kwargs.get("patch_size", model_config.site_specific.patch_size),
-        patch_stride=kwargs.get("patch_stride", model_config.site_specific.patch_stride),
         vv_clipped_range=kwargs.get("vv_clipped_range", model_config.site_specific.vv_clipped_range),
         vh_clipped_range=kwargs.get("vh_clipped_range", model_config.site_specific.vh_clipped_range),
         site_name=site_name,
+        train_pair_sampling_strategy=kwargs.get(
+            "train_pair_sampling_strategy", model_config.site_specific.train_pair_sampling_strategy
+        ),
+        val_pair_sampling_strategy=kwargs.get(
+            "val_pair_sampling_strategy", model_config.site_specific.val_pair_sampling_strategy
+        ),
+        train_num_pairs_per_epoch=kwargs.get(
+            "train_num_pairs_per_epoch", model_config.site_specific.train_num_pairs_per_epoch
+        ),
+        val_num_pairs_per_epoch=kwargs.get(
+            "val_num_pairs_per_epoch", model_config.site_specific.val_num_pairs_per_epoch
+        ),
     )
 
     if wandb_run:
@@ -133,29 +148,33 @@ def site_specific_train(
         state_dict = torch.load(pretrained_path, map_location=device)
         model.load_state_dict(state_dict["model_state"])
 
-    train_dataset = FloodEventDataset(
+    train_dataset = SiteSpecificTrainingDataset(
         dataset_type="train",
         pre_flood_split_csv_path=data_config.splits.pre_flood_split,
-        post_flood_split_csv_path=data_config.splits.post_flood_split,
         sites=[site_name],
         num_temporal_length=config["num_temporal_length"],
         patch_size=config["patch_size"],
-        patch_stride=config["patch_stride"],
-        transform=lambda x: augment_data(x, model_config.augmentation, False),
-        vv_clipped_range=config.get("vv_clipped_range", model_config.site_specific.vv_clipped_range),
-        vh_clipped_range=config.get("vh_clipped_range", model_config.site_specific.vh_clipped_range),
+        vv_clipped_range=config["vv_clipped_range"],
+        vh_clipped_range=config["vh_clipped_range"],
+        augmentation_config=model_config.augmentation,
+        pair_sampling_strategy=config["train_pair_sampling_strategy"],
+        num_pairs_per_epoch=config["train_num_pairs_per_epoch"],
+        use_contrastive_pairing_rules=True,
+        positive_pair_ratio=0.5,
     )
-    val_dataset = FloodEventDataset(
+    val_dataset = SiteSpecificTrainingDataset(
         dataset_type="val",
         pre_flood_split_csv_path=data_config.splits.pre_flood_split,
-        post_flood_split_csv_path=data_config.splits.post_flood_split,
         sites=[site_name],
         num_temporal_length=config["num_temporal_length"],
         patch_size=config["patch_size"],
-        patch_stride=config["patch_stride"],
-        transform=lambda x: augment_data(x, model_config.augmentation, False),
-        vv_clipped_range=config.get("vv_clipped_range", model_config.site_specific.vv_clipped_range),
-        vh_clipped_range=config.get("vh_clipped_range", model_config.site_specific.vh_clipped_range),
+        vv_clipped_range=config["vv_clipped_range"],
+        vh_clipped_range=config["vh_clipped_range"],
+        augmentation_config=model_config.augmentation,
+        pair_sampling_strategy=config["val_pair_sampling_strategy"],
+        num_pairs_per_epoch=config["val_num_pairs_per_epoch"],
+        use_contrastive_pairing_rules=True,
+        positive_pair_ratio=0.5,
     )
     train_size = len(train_dataset)
     val_size = len(val_dataset)
@@ -201,37 +220,33 @@ def site_specific_train(
             # reset progress bar
             progress.update(train_task, completed=0)
             progress.update(val_task, completed=0)
-            for batch_idx, (pre_flood_seq, post_flood_img) in enumerate(train_loader):
-                pre_flood_seq = pre_flood_seq.to(device)  # (B, T, H, W, C)
-                post_flood_img = post_flood_img.to(device)  # (B, 1, H, W, C)
-
-                # TODO: remove this once we have a better way to handle the temporal dimension
-                # For site-specific training, we focus on the last 4 frames of pre-flood sequence
-                # to match the pretrained model input format
-                if pre_flood_seq.shape[1] > 4:
-                    pre_flood_input = pre_flood_seq[:, -4:, :, :, :]  # Take last 4 frames
+            for batch_idx, batch in enumerate(train_loader):
+                # Batch may include labels when using pairing rules
+                if isinstance(batch, list | tuple) and len(batch) == 3:
+                    seq_a, seq_b, _ = batch
                 else:
-                    pre_flood_input = pre_flood_seq
+                    seq_a, seq_b = batch
 
-                # Squeeze post-flood to match pre-flood temporal dimension for processing
-                post_flood_input = post_flood_img.squeeze(1)  # (B, H, W, C)
-                # Replicate post-flood image to create 4-frame sequence for model input
-                post_flood_input = post_flood_input.unsqueeze(1).repeat(1, 4, 1, 1, 1)  # (B, 4, H, W, C)
+                seq_a = seq_a.to(device)  # (B, T, H, W, C)
+                seq_b = seq_b.to(device)
 
-                pre_mu, pre_logvar = model.encode(pre_flood_input)
-                post_mu, post_logvar = model.encode(post_flood_input)
+                # Model now supports variable T; dataset provides sequences with
+                # config["num_temporal_length"], so no trimming is needed.
 
-                x_recon, mu, logvar, z = model(pre_flood_input)
+                # Forward both streams
+                x1_recon, mu1, logvar1, _ = model(seq_a)
+                x2_recon, mu2, logvar2, _ = model(seq_b)
 
-                loss_dict = model.compute_loss(
-                    pre_flood_input,
-                    x_recon,
-                    mu,
-                    logvar,
-                    contrastive_pairs=(pre_mu, post_mu),
-                )
+                # Component losses for each stream (no contrastive inside helper)
+                comp1 = model.compute_loss(seq_a, x1_recon, mu1, logvar1, contrastive_pairs=None)
+                comp2 = model.compute_loss(seq_b, x2_recon, mu2, logvar2, contrastive_pairs=None)
 
-                loss = loss_dict["total_loss"]
+                recon_loss = 0.5 * (comp1["reconstruction_loss"] + comp2["reconstruction_loss"])
+                kl_loss = 0.5 * (comp1["kl_loss"] + comp2["kl_loss"])
+                contrastive_loss = torch.mean(1 - F.cosine_similarity(mu1, mu2, dim=1))
+
+                contrastive_weight = 1 - model.alpha - model.beta
+                loss = model.alpha * kl_loss + model.beta * recon_loss + contrastive_weight * contrastive_loss
 
                 # Backward pass
                 optimizer.zero_grad()
@@ -240,13 +255,19 @@ def site_specific_train(
                 optimizer.step()
 
                 train_loss += loss.item()
-                train_recon_loss += loss_dict["reconstruction_loss"].item()
-                train_kl_loss += loss_dict["kl_loss"].item()
-                train_contrastive_loss += loss_dict["contrastive_loss"].item()
+                train_recon_loss += recon_loss.item()
+                train_kl_loss += kl_loss.item()
+                train_contrastive_loss += contrastive_loss.item()
 
                 if debug:
                     print("DEBUG - Loss components:")
-                    for k, v in loss_dict.items():
+                    debug_losses = {
+                        "total_loss": loss,
+                        "reconstruction_loss": recon_loss,
+                        "kl_loss": kl_loss,
+                        "contrastive_loss": contrastive_loss,
+                    }
+                    for k, v in debug_losses.items():
                         print(f"  {k}: {v.item():.6f}, NaN: {torch.isnan(v).any()}")
                     return model
 
@@ -261,34 +282,34 @@ def site_specific_train(
             val_contrastive_loss = 0.0
 
             with torch.no_grad():
-                for batch_idx, (pre_flood_seq, post_flood_img) in enumerate(val_loader):
-                    pre_flood_seq = pre_flood_seq.to(device)
-                    post_flood_img = post_flood_img.to(device)
-
-                    if pre_flood_seq.shape[1] > 4:
-                        pre_flood_input = pre_flood_seq[:, -4:, :, :, :]
+                for batch_idx, batch in enumerate(val_loader):
+                    if isinstance(batch, list | tuple) and len(batch) == 3:
+                        seq_a, seq_b, _ = batch
                     else:
-                        pre_flood_input = pre_flood_seq
+                        seq_a, seq_b = batch
 
-                    post_flood_input = post_flood_img.squeeze(1)
-                    post_flood_input = post_flood_input.unsqueeze(1).repeat(1, 4, 1, 1, 1)
+                    seq_a = seq_a.to(device)
+                    seq_b = seq_b.to(device)
 
-                    pre_mu, pre_logvar = model.encode(pre_flood_input)
-                    post_mu, post_logvar = model.encode(post_flood_input)
-                    x_recon, mu, logvar, z = model(pre_flood_input)
+                    # Model supports variable T; no trimming.
 
-                    loss_dict = model.compute_loss(
-                        pre_flood_input,
-                        x_recon,
-                        mu,
-                        logvar,
-                        contrastive_pairs=(pre_mu, post_mu),
-                    )
+                    x1_recon, mu1, logvar1, _ = model(seq_a)
+                    x2_recon, mu2, logvar2, _ = model(seq_b)
 
-                    val_loss += loss_dict["total_loss"].item()
-                    val_recon_loss += loss_dict["reconstruction_loss"].item()
-                    val_kl_loss += loss_dict["kl_loss"].item()
-                    val_contrastive_loss += loss_dict["contrastive_loss"].item()
+                    comp1 = model.compute_loss(seq_a, x1_recon, mu1, logvar1, contrastive_pairs=None)
+                    comp2 = model.compute_loss(seq_b, x2_recon, mu2, logvar2, contrastive_pairs=None)
+
+                    recon_loss = 0.5 * (comp1["reconstruction_loss"] + comp2["reconstruction_loss"])
+                    kl_loss = 0.5 * (comp1["kl_loss"] + comp2["kl_loss"])
+                    contrastive_loss = torch.mean(1 - F.cosine_similarity(mu1, mu2, dim=1))
+
+                    contrastive_weight = 1 - model.alpha - model.beta
+                    total = model.alpha * kl_loss + model.beta * recon_loss + contrastive_weight * contrastive_loss
+
+                    val_loss += total.item()
+                    val_recon_loss += recon_loss.item()
+                    val_kl_loss += kl_loss.item()
+                    val_contrastive_loss += contrastive_loss.item()
 
                     progress.update(val_task, advance=1)
                     # break
@@ -362,6 +383,12 @@ def site_specific_train(
                         "epoch": epoch,
                     }
                 )
+            else:
+                with open(model_dir / "loss_log.csv", "a") as f:
+                    # write header if file is empty
+                    if f.tell() == 0:
+                        f.write("epoch,train_loss,train_recon_loss,train_kl_loss,train_contrastive_loss,val_loss,val_recon_loss,val_kl_loss,val_contrastive_loss\n")
+                    f.write(f"{epoch},{train_loss},{train_recon_loss},{train_kl_loss},{train_contrastive_loss},{val_loss},{val_recon_loss},{val_kl_loss},{val_contrastive_loss}\n")
 
             if patience_counter >= patience:
                 print(f"Early stopping at epoch {epoch} for site {site_name}")
@@ -371,6 +398,9 @@ def site_specific_train(
     print(f"Site-specific training completed for {site_name}")
     print(f"Best validation loss: {best_val_loss:.6f}")
     print(f"Model saved in: {model_dir}")
+
+    with open(data_config.artifact.site_specific_dir / f"{site_name}_latest_run.txt", "w") as f:
+        f.write(model_dir.name)
 
     return model, model_dir / "best_model_info.json"
 
@@ -382,15 +412,14 @@ if __name__ == "__main__":
     data_config = DataConfig.from_yaml("./yamls/data.yaml")
     model_config = CLVAEConfig.from_yaml("./yamls/model_clvae.yaml")
 
-    pretrained_model_path = data_config.artifact.pretrain_dir / "pretrain_20250731_184442" / "pretrained_model_33.pth"
+    pretrained_model_path = data_config.artifact.pretrain_dir / "pretrain_20250804_180028" / "pretrained_model_39.pth"
     site_name = "bolivia"
 
     test_kwargs = {
-        "max_epochs": 2,
-        "batch_size": 32,
-        "early_stopping_patience": 2,
-        "scheduler_patience": 1,
-        "patch_stride": 2,
+        # "max_epochs": 2,
+        "batch_size": 128,
+        # "early_stopping_patience": 2,
+        # "scheduler_patience": 1,
     }
     if use_wandb:
         with wandb.init(
