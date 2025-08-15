@@ -1,3 +1,4 @@
+import datetime
 import json
 from enum import Enum
 from pathlib import Path
@@ -13,7 +14,6 @@ from .eval import load_ground_truths, test_thresholds
 from .predict import generate_distance_maps
 from .pretrain import pretrain
 from .site_specific import site_specific_train
-from .utils import get_pretrain_run_name, get_site_specific_run_name
 from flood_detection_core.config import CLVAEConfig, DataConfig
 from flood_detection_core.models.clvae import CLVAE
 from flood_detection_core.utils import get_best_model_info, get_site_specific_latest_run
@@ -76,6 +76,9 @@ class TrainingManager:
         self.wandb_site_specific_name = "clvae-site-specific"
         self.wandb_tags = ["clvae"]
         self.wandb_group = "experiment-" + wandb.util.generate_id()
+
+    def _get_current_datetime(self) -> str:
+        return datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
 
     def pretrain(
         self,
@@ -174,7 +177,7 @@ class TrainingManager:
 
         # step 1: pretrain
 
-        pretrain_run_name = get_pretrain_run_name()
+        pretrain_run_name = f"pretrain_{self._get_current_datetime()}"
         if training_input.pretrain:
             if training_input.pretrain.mode == TrainingMode.RESUME:
                 print(f"Resuming pretrain from {training_input.pretrain.path}")
@@ -212,7 +215,7 @@ class TrainingManager:
         print("Starting site-specific")
         for site_specific_input in training_input.site_specific:
             site_name = site_specific_input.site
-            site_specific_run_name = get_site_specific_run_name(site_name)
+            site_specific_run_name = f"site_specific_{site_name}_{self._get_current_datetime()}"
             print(f"Starting site-specific for {site_name}")
             if site_specific_input.mode == TrainingMode.FRESH:
                 print(f"Starting fresh site-specific for {site_name}")
@@ -255,6 +258,7 @@ class TrainingManager:
             if use_wandb:
                 with wandb.init(
                     project=self.wandb_project,
+                    name=f"predict_{site_name}_{self._get_current_datetime()}",
                     group=self.wandb_group,
                     job_type="predict",
                     tags=self.wandb_tags + (inference_extra_tags or []) + [site_name],
@@ -293,6 +297,7 @@ class TrainingManager:
             if use_wandb:
                 with wandb.init(
                     project=self.wandb_project,
+                    name=f"eval_{site_name}_{self._get_current_datetime()}",
                     group=self.wandb_group,
                     job_type="eval",
                     tags=self.wandb_tags + (eval_extra_tags or []) + [site_name],
