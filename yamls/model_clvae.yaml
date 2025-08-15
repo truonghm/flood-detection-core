@@ -28,8 +28,8 @@ site_specific:
   batch_size: 32
   early_stopping_patience: 8
   # Loss weights (from paper Equation 1)
-  alpha: 0.1  # KL divergence weight (paper value)
-  beta: 0.4  # Reconstruction loss weight (reduced to balance with contrastive)
+  alpha: 0.0  # KL divergence weight (set to 0 to break latent collapse)
+  beta: 0.4  # Reconstruction loss weight (gives 0.6 weight to contrastive)
 
 inference:
   num_temporal_length: 4

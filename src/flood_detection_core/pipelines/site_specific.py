@@ -148,7 +148,7 @@ def site_specific_train(
         augmentation_config=model_config.augmentation,
         use_contrastive_pairing_rules=True,
         positive_pair_ratio=0.5,
-        max_patches_per_pair="all",
+        max_patches_per_pair=128,  # Reduced for faster iteration during testing
         vv_clipped_range=config["vv_clipped_range"],
         vh_clipped_range=config["vh_clipped_range"],
     )
