@@ -102,17 +102,6 @@ def site_specific_train(
         # Loss weights from paper
         alpha=kwargs.get("alpha", model_config.site_specific.alpha),
         beta=kwargs.get("beta", model_config.site_specific.beta),
-        # KL annealing parameters
-        kl_annealing_type=kwargs.get("kl_annealing_type", model_config.site_specific.kl_annealing_type),
-        kl_warmup_epochs=kwargs.get("kl_warmup_epochs", model_config.site_specific.kl_warmup_epochs),
-        kl_num_cycles=kwargs.get("kl_num_cycles", model_config.site_specific.kl_num_cycles),
-        kl_free_bits=kwargs.get("kl_free_bits", model_config.site_specific.kl_free_bits),
-        # Weighted reconstruction loss parameters
-        use_weighted_reconstruction=kwargs.get(
-            "use_weighted_reconstruction", model_config.site_specific.use_weighted_reconstruction
-        ),
-        flood_pixel_weight=kwargs.get("flood_pixel_weight", model_config.site_specific.flood_pixel_weight),
-        flood_threshold=kwargs.get("flood_threshold", model_config.site_specific.flood_threshold),
     )
 
     if wandb_run:
@@ -135,13 +124,6 @@ def site_specific_train(
         latent_dim=config["latent_dim"],
         alpha=config["alpha"],
         beta=config["beta"],
-        use_weighted_reconstruction=config["use_weighted_reconstruction"],
-        flood_pixel_weight=config["flood_pixel_weight"],
-        flood_threshold=config["flood_threshold"],
-        kl_free_bits=config["kl_free_bits"],
-        kl_annealing_type=config["kl_annealing_type"],
-        kl_warmup_epochs=config["kl_warmup_epochs"],
-        kl_num_cycles=config["kl_num_cycles"],
     ).to(device)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=config["learning_rate"])
@@ -209,13 +191,6 @@ def site_specific_train(
         val_task = progress.add_task("Validation", total=len(val_loader))
 
         for epoch in range(start_epoch, config["max_epochs"]):
-            # Update KL annealing weight before training
-            model.update_kl_weight(
-                current_epoch=epoch,
-                total_epochs=config["max_epochs"],
-                annealing_start_epoch=0,  # Start immediately (warmup handled by annealing type)
-            )
-
             model.train()
             train_loss = 0.0
             train_recon_loss = 0.0

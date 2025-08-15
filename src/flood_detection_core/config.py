@@ -219,18 +219,9 @@ class CLVAESiteSpecificConfig(BaseModel):
     early_stopping_patience: int = 5
     vv_clipped_range: tuple[float, float] | None = None
     vh_clipped_range: tuple[float, float] | None = None
-    # KL annealing parameters
-    kl_annealing_type: str = "linear"
-    kl_warmup_epochs: int = 5
-    kl_num_cycles: int = 4
-    kl_free_bits: float = 0.0
     # Loss weights from paper
     alpha: float = 0.1
     beta: float = 0.7
-    # Weighted reconstruction parameters
-    use_weighted_reconstruction: bool = False
-    flood_pixel_weight: float = 2.0
-    flood_threshold: float = 0.7
 
 
 class CLVAEInferenceConfig(BaseModel):

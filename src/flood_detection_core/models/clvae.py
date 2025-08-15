@@ -341,13 +341,6 @@ class CLVAE(nn.Module):
         latent_dim: int = 128,
         alpha: float = 0.1,  # KL divergence weight
         beta: float = 0.7,  # Reconstruction loss weight
-        use_weighted_reconstruction: bool = True,  # Enable weighted reconstruction loss
-        flood_pixel_weight: float = 2.0,  # Weight for high-intensity (flood-like) pixels
-        flood_threshold: float = 0.7,  # Threshold for considering pixels as flood-like
-        kl_free_bits: float = 0.0,  # Minimum KL threshold per dimension (0 = disabled)
-        kl_annealing_type: str = "linear",  # Type of annealing: "linear", "cyclical", or "warmup"
-        kl_warmup_epochs: int = 5,  # Number of warmup epochs for warmup annealing
-        kl_num_cycles: int = 4,  # Number of cycles for cyclical annealing
     ):
         super().__init__()
 
@@ -361,20 +354,6 @@ class CLVAE(nn.Module):
         self.alpha = alpha  # KL divergence weight
         self.beta = beta  # Reconstruction loss weight
         # Contrastive weight = (1 - alpha - beta) = 0.2
-
-        # Store original alpha for KL annealing
-        self._original_alpha = alpha
-
-        # Weighted reconstruction loss parameters
-        self.use_weighted_reconstruction = use_weighted_reconstruction
-        self.flood_pixel_weight = flood_pixel_weight
-        self.flood_threshold = flood_threshold
-
-        # KL annealing parameters
-        self.kl_free_bits = kl_free_bits
-        self.kl_annealing_type = kl_annealing_type
-        self.kl_warmup_epochs = kl_warmup_epochs
-        self.kl_num_cycles = kl_num_cycles
 
     def reparameterize(self, mu: torch.Tensor, logvar: torch.Tensor) -> torch.Tensor:
         """
@@ -392,51 +371,6 @@ class CLVAE(nn.Module):
         std = torch.exp(0.5 * logvar)
         eps = torch.randn_like(std)
         return mu + eps * std
-
-    def update_kl_weight(self, current_epoch: int, total_epochs: int, annealing_start_epoch: int = 0) -> None:
-        """
-        Update KL divergence weight using specified annealing schedule.
-
-        Parameters
-        ----------
-        current_epoch : int
-            Current training epoch (0-based)
-        total_epochs : int
-            Total number of training epochs
-        annealing_start_epoch : int, default=0
-            Epoch to start KL annealing from (before this, alpha=0)
-        """
-        if current_epoch < annealing_start_epoch:
-            self.alpha = 0.0
-        elif self.kl_annealing_type == "linear":
-            # Linear annealing from 0 to original_alpha (paper's final value)
-            progress = (current_epoch - annealing_start_epoch) / max(1, (total_epochs - annealing_start_epoch - 1))
-            progress = min(progress, 1.0)  # Clamp to [0, 1]
-            self.alpha = progress * self._original_alpha
-        elif self.kl_annealing_type == "cyclical":
-            # Cyclical annealing: oscillate between 0 and original_alpha
-            # Helps prevent posterior collapse while reaching paper's target
-            effective_epoch = current_epoch - annealing_start_epoch
-            cycle_length = (total_epochs - annealing_start_epoch) / self.kl_num_cycles
-            cycle_progress = (effective_epoch % cycle_length) / max(1, cycle_length)
-
-            # Use cosine annealing within each cycle for smoother transitions
-            self.alpha = self._original_alpha * 0.5 * (1 - torch.cos(torch.tensor(cycle_progress * torch.pi)).item())
-
-            # Ensure final epoch reaches exactly original_alpha
-            if current_epoch == total_epochs - 1:
-                self.alpha = self._original_alpha
-        elif self.kl_annealing_type == "warmup":
-            # Warmup annealing: stay at 0 for warmup epochs, then linearly increase
-            if current_epoch < self.kl_warmup_epochs:
-                self.alpha = 0.0
-            else:
-                progress = (current_epoch - self.kl_warmup_epochs) / max(1, (total_epochs - self.kl_warmup_epochs - 1))
-                progress = min(progress, 1.0)
-                self.alpha = progress * self._original_alpha
-        else:
-            # Default to paper's value if annealing type not recognized
-            self.alpha = self._original_alpha
 
     def forward(
         self, x: torch.Tensor, use_skip_connections: bool = True
@@ -503,33 +437,10 @@ class CLVAE(nn.Module):
         batch_size = x.size(0)
 
         # Reconstruction loss (Binary Cross Entropy with logits, as per paper)
-        # Sum over pixels per sample, then average over batch to match common VAE practice
-        # Note: targets are expected in [0,1] per paper (pre-flood images normalized)
-        if self.use_weighted_reconstruction:
-            # Create pixel weights based on target intensity
-            # High intensity pixels (flood-like) get higher weights to combat class imbalance
-            pixel_weights = torch.where(
-                x > self.flood_threshold,
-                self.flood_pixel_weight,  # Higher weight for flood-like pixels
-                1.0,  # Normal weight for background pixels
-            )
+        recon_loss = F.binary_cross_entropy_with_logits(reconstruction, x, reduction="sum") / batch_size
 
-            # Apply weighted BCE loss
-            bce_loss = F.binary_cross_entropy_with_logits(reconstruction, x, weight=pixel_weights, reduction="none")
-            recon_loss = bce_loss.sum() / batch_size
-        else:
-            # Original unweighted loss
-            recon_loss = F.binary_cross_entropy_with_logits(reconstruction, x, reduction="sum") / batch_size
-
-        # KL divergence loss with optional free bits
-        kl_per_dim = -0.5 * (1 + logvar - mu.pow(2) - logvar.exp())  # Per dimension KL
-
-        if self.kl_free_bits > 0:
-            # Apply free bits: only penalize KL above threshold
-            # This prevents posterior collapse by allowing some minimum information flow
-            kl_per_dim = torch.maximum(kl_per_dim, torch.tensor(self.kl_free_bits, device=x.device))
-
-        kl_loss = torch.sum(kl_per_dim) / batch_size
+        # KL divergence loss
+        kl_loss = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp()) / batch_size
 
         # Contrastive loss (if second reconstruction provided)
         # Following paper Eq. (1): L_Contrast(P̂₁, P̂₂) - applied on reconstructions, not latents
