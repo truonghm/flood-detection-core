@@ -1,22 +1,20 @@
 # TODO: scale with multi-gpu setup
 
-import datetime
 import json
 from pathlib import Path
 from typing import Any
 
 import torch
-import torch.nn.functional as F
 from rich import print
 from rich.progress import Progress
 from torch.utils.data import DataLoader
 
 import wandb
 from wandb.sdk.wandb_run import Run
+from .utils import get_site_specific_run_name
 from flood_detection_core.config import CLVAEConfig, DataConfig
 from flood_detection_core.data.datasets import SiteSpecificTrainingDataset
 from flood_detection_core.models.clvae import CLVAE
-from .utils import get_site_specific_run_name
 
 
 def site_specific_train(
@@ -30,8 +28,7 @@ def site_specific_train(
     resume_checkpoint: Path | str | None = None,
     **kwargs: Any,
 ) -> tuple[CLVAE, Path]:
-    """
-    Site-specific fine-tuning for each flood event using contrastive learning.
+    """Site-specific fine-tuning for each flood event using contrastive learning.
 
     Purpose
     -------
@@ -214,22 +211,21 @@ def site_specific_train(
                 # config["num_temporal_length"], so no trimming is needed.
 
                 # Forward both streams
-                x1_recon, mu1, logvar1, _ = model(seq_a)
-                x2_recon, mu2, logvar2, _ = model(seq_b)
+                x1_recon, mu1, logvar1, z1 = model(seq_a)
+                x2_recon, mu2, logvar2, z2 = model(seq_b)
 
-                # Compute combined loss following paper Eq. (1): L_Contrast(P̂₁, P̂₂)
-                # Use first stream's reconstruction as primary, second as contrastive target
+                # Compute combined loss with contrastive on latent representations
                 combined_loss = model.compute_loss(
-                    x=seq_a, reconstruction=x1_recon, mu=mu1, logvar=logvar1, contrastive_reconstructions=x2_recon
+                    x=seq_a, reconstruction=x1_recon, mu=mu1, logvar=logvar1, z=z1, contrastive_z=z2
                 )
 
                 # Add the second stream's reconstruction and KL losses (symmetric treatment)
-                comp2 = model.compute_loss(seq_b, x2_recon, mu2, logvar2, contrastive_reconstructions=None)
+                comp2 = model.compute_loss(seq_b, x2_recon, mu2, logvar2, z=None, contrastive_z=None)
 
                 # Combine both streams symmetrically as in paper Eq. (1)
                 recon_loss = 0.5 * (combined_loss["reconstruction_loss"] + comp2["reconstruction_loss"])
                 kl_loss = 0.5 * (combined_loss["kl_loss"] + comp2["kl_loss"])
-                contrastive_loss = combined_loss["contrastive_loss"]  # Already computed on reconstructions
+                contrastive_loss = combined_loss["contrastive_loss"]  # Computed on latent representations
 
                 contrastive_weight = 1 - model.alpha - model.beta
                 loss = model.alpha * kl_loss + model.beta * recon_loss + contrastive_weight * contrastive_loss
@@ -279,16 +275,16 @@ def site_specific_train(
 
                     # Model supports variable T; no trimming.
 
-                    x1_recon, mu1, logvar1, _ = model(seq_a)
-                    x2_recon, mu2, logvar2, _ = model(seq_b)
+                    x1_recon, mu1, logvar1, z1 = model(seq_a)
+                    x2_recon, mu2, logvar2, z2 = model(seq_b)
 
-                    # Compute combined loss following paper Eq. (1): L_Contrast(P̂₁, P̂₂)
+                    # Compute combined loss with contrastive on latent representations
                     combined_loss = model.compute_loss(
-                        x=seq_a, reconstruction=x1_recon, mu=mu1, logvar=logvar1, contrastive_reconstructions=x2_recon
+                        x=seq_a, reconstruction=x1_recon, mu=mu1, logvar=logvar1, z=z1, contrastive_z=z2
                     )
 
                     # Add the second stream's reconstruction and KL losses
-                    comp2 = model.compute_loss(seq_b, x2_recon, mu2, logvar2, contrastive_reconstructions=None)
+                    comp2 = model.compute_loss(seq_b, x2_recon, mu2, logvar2, z=None, contrastive_z=None)
 
                     recon_loss = 0.5 * (combined_loss["reconstruction_loss"] + comp2["reconstruction_loss"])
                     kl_loss = 0.5 * (combined_loss["kl_loss"] + comp2["kl_loss"])

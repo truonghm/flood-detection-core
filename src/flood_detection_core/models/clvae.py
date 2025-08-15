@@ -52,8 +52,7 @@ class ConvLSTM(nn.Module):
         self.convlstm_cell = ConvLSTMCell(input_channels, hidden_channels, kernel_size)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Forward pass for ConvLSTM.
+        """Forward pass for ConvLSTM.
 
         Parameters
         ----------
@@ -119,8 +118,7 @@ class ResidualBlock3D(nn.Module):
 
 
 class ConvLSTMEncoder(nn.Module):
-    """
-    Encoder component of CLVAE using ConvLSTM for temporal modeling.
+    """Encoder component of CLVAE using ConvLSTM for temporal modeling.
 
     Accepts variable temporal length T ≥ 1.
     Input: (batch, T, 16, 16, 2) → Output: μ (batch, 128), σ (batch, 128)
@@ -153,8 +151,7 @@ class ConvLSTMEncoder(nn.Module):
     def forward(
         self, x: torch.Tensor, return_features: bool = False
     ) -> tuple[torch.Tensor, torch.Tensor] | tuple[torch.Tensor, torch.Tensor, list[torch.Tensor]]:
-        """
-        Forward pass for encoder.
+        """Forward pass for encoder.
 
         Parameters
         ----------
@@ -218,8 +215,7 @@ class ConvLSTMEncoder(nn.Module):
 
 
 class ConvLSTMDecoder(nn.Module):
-    """
-    Decoder component reconstructing input from latent representation.
+    """Decoder component reconstructing input from latent representation.
 
     Input: latent vector (batch, 128) → Output: (batch, T, 16, 16, 2)
     where T matches the target temporal length (typically input sequence length).
@@ -257,8 +253,7 @@ class ConvLSTMDecoder(nn.Module):
         encoder_features: list[torch.Tensor] | None = None,
         target_time_steps: int | None = None,
     ) -> torch.Tensor:
-        """
-        Forward pass for decoder with optional skip connections.
+        """Forward pass for decoder with optional skip connections.
 
         Parameters
         ----------
@@ -328,8 +323,7 @@ class ConvLSTMDecoder(nn.Module):
 
 
 class CLVAE(nn.Module):
-    """
-    Complete CLVAE model integrating encoder-decoder with contrastive learning.
+    """Complete CLVAE model integrating encoder-decoder with contrastive learning.
 
     Total parameters: 576,395 (as specified in the plan)
     """
@@ -375,8 +369,7 @@ class CLVAE(nn.Module):
     def forward(
         self, x: torch.Tensor, use_skip_connections: bool = True
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        """
-        Forward pass for CLVAE with optional skip connections.
+        """Forward pass for CLVAE with optional skip connections.
 
         Parameters
         ----------
@@ -410,7 +403,8 @@ class CLVAE(nn.Module):
         reconstruction: torch.Tensor,
         mu: torch.Tensor,
         logvar: torch.Tensor,
-        contrastive_reconstructions: torch.Tensor | None = None,
+        z: torch.Tensor | None = None,
+        contrastive_z: torch.Tensor | None = None,
     ) -> dict:
         """
         Compute three loss components: reconstruction, KL divergence, and contrastive.
@@ -425,9 +419,10 @@ class CLVAE(nn.Module):
             Mean parameters
         logvar : torch.Tensor
             Log variance parameters
-        contrastive_reconstructions : torch.Tensor | None
-            Optional second reconstruction for contrastive learning (following paper Eq. 1)
-            Should be the reconstruction from a different patch (P̂₂ in paper notation)
+        z : torch.Tensor | None
+            Latent representation of current patch
+        contrastive_z : torch.Tensor | None
+            Latent representation of different patch for contrastive learning
 
         Returns
         -------
@@ -442,25 +437,21 @@ class CLVAE(nn.Module):
         # KL divergence loss
         kl_loss = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp()) / batch_size
 
-        # Contrastive loss (if second reconstruction provided)
-        # Following paper Eq. (1): L_Contrast(P̂₁, P̂₂) - applied on reconstructions, not latents
+        # Contrastive loss on latent representations
+        # This forces the encoder to learn diverse representations for different spatial patches
         contrastive_loss = torch.tensor(0.0, device=x.device)
-        if contrastive_reconstructions is not None:
-            # Flatten reconstructions for cosine similarity calculation
-            # Shape: (batch, T, H, W, C) -> (batch, T*H*W*C)
-            recon1_flat = reconstruction.reshape(batch_size, -1)
-            recon2_flat = contrastive_reconstructions.reshape(batch_size, -1)
+        if z is not None and contrastive_z is not None:
+            # Normalize latent codes for stable cosine similarity
+            z1_norm = F.normalize(z, p=2, dim=1)
+            z2_norm = F.normalize(contrastive_z, p=2, dim=1)
 
-            # Cosine similarity between reconstructed outputs (paper Eq. 1)
-            # We want to MAXIMIZE the distance between reconstructions of different patches
-            # This encourages diversity in reconstructions as stated in the paper
-            cos_sim = F.cosine_similarity(recon1_flat, recon2_flat, dim=1)
+            # Cosine similarity between latent representations
+            cos_sim = F.cosine_similarity(z1_norm, z2_norm, dim=1)
 
-            # Loss = 1 - cosine_similarity (paper uses cosine similarity loss)
-            # When cos_sim = 1 (identical), loss = 0 (bad, we want them different)
-            # When cos_sim = -1 (opposite), loss = 2 (we're pushing them apart, good)
-            # When cos_sim = 0 (orthogonal), loss = 1 (decent separation)
-            contrastive_loss = torch.mean(1 - cos_sim)
+            # We want to minimize similarity (maximize diversity) between different patches
+            # cos_sim ranges from -1 to 1, we want it closer to -1 or 0 (orthogonal/opposite)
+            # Loss = (cos_sim + 1) / 2 to scale to [0, 1] where 0 is most different
+            contrastive_loss = torch.mean((cos_sim + 1) / 2)
 
         # Total loss (following paper's equation 1)
         # L_Total = α*L_KL + β*L_Recon + (1-α-β)*L_Contrast

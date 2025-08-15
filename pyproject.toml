@@ -54,4 +54,7 @@ torchvision = [
 ]
 
 [dependency-groups]
-dev = ["vastai>=0.2.8"]
+dev = [
+    "pre-commit>=4.2.0",
+    "vastai>=0.2.8",
+]
