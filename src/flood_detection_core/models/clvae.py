@@ -432,7 +432,7 @@ class CLVAE(nn.Module):
         batch_size = x.size(0)
 
         # Reconstruction loss (Binary Cross Entropy with logits, as per paper)
-        recon_loss = F.binary_cross_entropy_with_logits(reconstruction, x, reduction="sum") / batch_size
+        recon_loss = F.binary_cross_entropy_with_logits(reconstruction, x, reduction="mean")
 
         # KL divergence loss
         kl_loss = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp()) / batch_size
