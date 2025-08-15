@@ -4,7 +4,6 @@ from pathlib import Path
 from typing import Literal
 
 from rich import print
-from sklearn.model_selection import train_test_split
 
 from flood_detection_core.config import DataConfig
 from flood_detection_core.data.constants import HandLabeledSen1Flood11Sites
@@ -18,46 +17,27 @@ class SplitRatio:
     test: float
 
 
-def split_data(data_config: DataConfig, split_ratio: SplitRatio) -> None:
-    if split_ratio.pretrain + split_ratio.train + split_ratio.validation + split_ratio.test != 1:
-        raise ValueError("Split ratio must sum to 1")
-
-    print(f"Input split sizes:\n {split_ratio}")
-
+def split_data(data_config: DataConfig, ) -> None:
     site_tiles_mapping = {}
     for site in HandLabeledSen1Flood11Sites:
         tile_dir_paths = list(data_config.gee.pre_flood_dir.glob(f"{site}/*/"))
         tiles = [tile_dir_path.name for tile_dir_path in tile_dir_paths]
         n_tiles = len(tiles)
 
-        train_tiles, test_val_pretrain_tiles = train_test_split(tiles, train_size=split_ratio.train, random_state=42)
-        val_tiles, test_pretrain_tiles = train_test_split(
-            test_val_pretrain_tiles,
-            train_size=split_ratio.validation / (split_ratio.validation + split_ratio.test + split_ratio.pretrain),
-            random_state=42,
-        )
-        test_tiles, pretrain_tiles = train_test_split(
-            test_pretrain_tiles,
-            train_size=split_ratio.test / (split_ratio.test + split_ratio.pretrain),
-            random_state=42,
-        )
+        train_val_tiles = test_tiles = pretrain_tiles = tiles
 
         print(f"Site: {site}")
         print(
-            "train:",
-            len(train_tiles),
-            "val:",
-            len(val_tiles),
+            "train+val:",
+            len(train_val_tiles),
             "test:",
             len(test_tiles),
             "pretrain:",
             len(pretrain_tiles),
         )
         print(
-            "train:",
-            f"{len(train_tiles) / n_tiles:.2f}",
-            "val:",
-            f"{len(val_tiles) / n_tiles:.2f}",
+            "train+val:",
+            f"{len(train_val_tiles) / n_tiles:.2f}",
             "test:",
             f"{len(test_tiles) / n_tiles:.2f}",
             "pretrain:",
@@ -65,8 +45,7 @@ def split_data(data_config: DataConfig, split_ratio: SplitRatio) -> None:
         )
 
         site_tiles_mapping[site] = {
-            "train": train_tiles,
-            "val": val_tiles,
+            "train_val": train_val_tiles,
             "test": test_tiles,
             "pretrain": pretrain_tiles,
         }
@@ -126,7 +105,7 @@ def split_data(data_config: DataConfig, split_ratio: SplitRatio) -> None:
 
 
 def get_flood_event_tile_pairs(
-    dataset_type: Literal["train", "val", "test", "pretrain"],
+    dataset_type: Literal["train_val", "test", "pretrain"],
     pre_flood_split_csv_path: Path,
     post_flood_split_csv_path: Path,
 ) -> list[dict]:

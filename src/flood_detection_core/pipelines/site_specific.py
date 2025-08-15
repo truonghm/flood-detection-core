@@ -16,12 +16,14 @@ from wandb.sdk.wandb_run import Run
 from flood_detection_core.config import CLVAEConfig, DataConfig
 from flood_detection_core.data.datasets import SiteSpecificTrainingDataset
 from flood_detection_core.models.clvae import CLVAE
+from .utils import get_site_specific_run_name
 
 
 def site_specific_train(
     data_config: DataConfig,
     model_config: CLVAEConfig,
     site_name: str,
+    run_name: str | None = None,
     wandb_run: Run | None = None,
     debug: bool = False,
     pretrained_model_path: Path | str | None = None,
@@ -97,18 +99,20 @@ def site_specific_train(
         vv_clipped_range=kwargs.get("vv_clipped_range", model_config.site_specific.vv_clipped_range),
         vh_clipped_range=kwargs.get("vh_clipped_range", model_config.site_specific.vh_clipped_range),
         site_name=site_name,
-        train_pair_sampling_strategy=kwargs.get(
-            "train_pair_sampling_strategy", model_config.site_specific.train_pair_sampling_strategy
+        # Loss weights from paper
+        alpha=kwargs.get("alpha", model_config.site_specific.alpha),
+        beta=kwargs.get("beta", model_config.site_specific.beta),
+        # KL annealing parameters
+        kl_annealing_type=kwargs.get("kl_annealing_type", model_config.site_specific.kl_annealing_type),
+        kl_warmup_epochs=kwargs.get("kl_warmup_epochs", model_config.site_specific.kl_warmup_epochs),
+        kl_num_cycles=kwargs.get("kl_num_cycles", model_config.site_specific.kl_num_cycles),
+        kl_free_bits=kwargs.get("kl_free_bits", model_config.site_specific.kl_free_bits),
+        # Weighted reconstruction loss parameters
+        use_weighted_reconstruction=kwargs.get(
+            "use_weighted_reconstruction", model_config.site_specific.use_weighted_reconstruction
         ),
-        val_pair_sampling_strategy=kwargs.get(
-            "val_pair_sampling_strategy", model_config.site_specific.val_pair_sampling_strategy
-        ),
-        train_num_pairs_per_epoch=kwargs.get(
-            "train_num_pairs_per_epoch", model_config.site_specific.train_num_pairs_per_epoch
-        ),
-        val_num_pairs_per_epoch=kwargs.get(
-            "val_num_pairs_per_epoch", model_config.site_specific.val_num_pairs_per_epoch
-        ),
+        flood_pixel_weight=kwargs.get("flood_pixel_weight", model_config.site_specific.flood_pixel_weight),
+        flood_threshold=kwargs.get("flood_threshold", model_config.site_specific.flood_threshold),
     )
 
     if wandb_run:
@@ -118,8 +122,8 @@ def site_specific_train(
     for k, v in config.items():
         print(f"  {k}: {v}")
 
-    current_date = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    model_dir = data_config.artifact.site_specific_dir / f"site_specific_{site_name}_{current_date}"
+    run_name = run_name or get_site_specific_run_name(site_name)
+    model_dir = data_config.artifact.site_specific_dir / run_name
     model_dir.mkdir(parents=True, exist_ok=True)
 
     with open(model_dir / "config.json", "w") as f:
@@ -129,6 +133,15 @@ def site_specific_train(
         input_channels=config["input_channels"],
         hidden_channels=config["hidden_channels"],
         latent_dim=config["latent_dim"],
+        alpha=config["alpha"],
+        beta=config["beta"],
+        use_weighted_reconstruction=config["use_weighted_reconstruction"],
+        flood_pixel_weight=config["flood_pixel_weight"],
+        flood_threshold=config["flood_threshold"],
+        kl_free_bits=config["kl_free_bits"],
+        kl_annealing_type=config["kl_annealing_type"],
+        kl_warmup_epochs=config["kl_warmup_epochs"],
+        kl_num_cycles=config["kl_num_cycles"],
     ).to(device)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=config["learning_rate"])
@@ -148,34 +161,19 @@ def site_specific_train(
         state_dict = torch.load(pretrained_path, map_location=device)
         model.load_state_dict(state_dict["model_state"])
 
-    train_dataset = SiteSpecificTrainingDataset(
-        dataset_type="train",
+    dataset = SiteSpecificTrainingDataset(
         pre_flood_split_csv_path=data_config.splits.pre_flood_split,
         sites=[site_name],
         num_temporal_length=config["num_temporal_length"],
         patch_size=config["patch_size"],
-        vv_clipped_range=config["vv_clipped_range"],
-        vh_clipped_range=config["vh_clipped_range"],
         augmentation_config=model_config.augmentation,
-        pair_sampling_strategy=config["train_pair_sampling_strategy"],
-        num_pairs_per_epoch=config["train_num_pairs_per_epoch"],
         use_contrastive_pairing_rules=True,
         positive_pair_ratio=0.5,
-    )
-    val_dataset = SiteSpecificTrainingDataset(
-        dataset_type="val",
-        pre_flood_split_csv_path=data_config.splits.pre_flood_split,
-        sites=[site_name],
-        num_temporal_length=config["num_temporal_length"],
-        patch_size=config["patch_size"],
+        max_patches_per_pair="all",
         vv_clipped_range=config["vv_clipped_range"],
         vh_clipped_range=config["vh_clipped_range"],
-        augmentation_config=model_config.augmentation,
-        pair_sampling_strategy=config["val_pair_sampling_strategy"],
-        num_pairs_per_epoch=config["val_num_pairs_per_epoch"],
-        use_contrastive_pairing_rules=True,
-        positive_pair_ratio=0.5,
     )
+    train_dataset, val_dataset = torch.utils.data.random_split(dataset, [0.85, 0.15])
     train_size = len(train_dataset)
     val_size = len(val_dataset)
     print(f"Site {site_name} - Train size: {train_size}, Val size: {val_size}")
@@ -211,6 +209,13 @@ def site_specific_train(
         val_task = progress.add_task("Validation", total=len(val_loader))
 
         for epoch in range(start_epoch, config["max_epochs"]):
+            # Update KL annealing weight before training
+            model.update_kl_weight(
+                current_epoch=epoch,
+                total_epochs=config["max_epochs"],
+                annealing_start_epoch=0,  # Start immediately (warmup handled by annealing type)
+            )
+
             model.train()
             train_loss = 0.0
             train_recon_loss = 0.0
@@ -237,13 +242,19 @@ def site_specific_train(
                 x1_recon, mu1, logvar1, _ = model(seq_a)
                 x2_recon, mu2, logvar2, _ = model(seq_b)
 
-                # Component losses for each stream (no contrastive inside helper)
-                comp1 = model.compute_loss(seq_a, x1_recon, mu1, logvar1, contrastive_pairs=None)
-                comp2 = model.compute_loss(seq_b, x2_recon, mu2, logvar2, contrastive_pairs=None)
+                # Compute combined loss following paper Eq. (1): L_Contrast(P̂₁, P̂₂)
+                # Use first stream's reconstruction as primary, second as contrastive target
+                combined_loss = model.compute_loss(
+                    x=seq_a, reconstruction=x1_recon, mu=mu1, logvar=logvar1, contrastive_reconstructions=x2_recon
+                )
 
-                recon_loss = 0.5 * (comp1["reconstruction_loss"] + comp2["reconstruction_loss"])
-                kl_loss = 0.5 * (comp1["kl_loss"] + comp2["kl_loss"])
-                contrastive_loss = torch.mean(1 - F.cosine_similarity(mu1, mu2, dim=1))
+                # Add the second stream's reconstruction and KL losses (symmetric treatment)
+                comp2 = model.compute_loss(seq_b, x2_recon, mu2, logvar2, contrastive_reconstructions=None)
+
+                # Combine both streams symmetrically as in paper Eq. (1)
+                recon_loss = 0.5 * (combined_loss["reconstruction_loss"] + comp2["reconstruction_loss"])
+                kl_loss = 0.5 * (combined_loss["kl_loss"] + comp2["kl_loss"])
+                contrastive_loss = combined_loss["contrastive_loss"]  # Already computed on reconstructions
 
                 contrastive_weight = 1 - model.alpha - model.beta
                 loss = model.alpha * kl_loss + model.beta * recon_loss + contrastive_weight * contrastive_loss
@@ -296,12 +307,17 @@ def site_specific_train(
                     x1_recon, mu1, logvar1, _ = model(seq_a)
                     x2_recon, mu2, logvar2, _ = model(seq_b)
 
-                    comp1 = model.compute_loss(seq_a, x1_recon, mu1, logvar1, contrastive_pairs=None)
-                    comp2 = model.compute_loss(seq_b, x2_recon, mu2, logvar2, contrastive_pairs=None)
+                    # Compute combined loss following paper Eq. (1): L_Contrast(P̂₁, P̂₂)
+                    combined_loss = model.compute_loss(
+                        x=seq_a, reconstruction=x1_recon, mu=mu1, logvar=logvar1, contrastive_reconstructions=x2_recon
+                    )
 
-                    recon_loss = 0.5 * (comp1["reconstruction_loss"] + comp2["reconstruction_loss"])
-                    kl_loss = 0.5 * (comp1["kl_loss"] + comp2["kl_loss"])
-                    contrastive_loss = torch.mean(1 - F.cosine_similarity(mu1, mu2, dim=1))
+                    # Add the second stream's reconstruction and KL losses
+                    comp2 = model.compute_loss(seq_b, x2_recon, mu2, logvar2, contrastive_reconstructions=None)
+
+                    recon_loss = 0.5 * (combined_loss["reconstruction_loss"] + comp2["reconstruction_loss"])
+                    kl_loss = 0.5 * (combined_loss["kl_loss"] + comp2["kl_loss"])
+                    contrastive_loss = combined_loss["contrastive_loss"]
 
                     contrastive_weight = 1 - model.alpha - model.beta
                     total = model.alpha * kl_loss + model.beta * recon_loss + contrastive_weight * contrastive_loss
@@ -357,6 +373,7 @@ def site_specific_train(
             # Logging
             if epoch % 5 == 0 or epoch == config["max_epochs"] - 1:
                 print(f"Epoch {epoch}/{config['max_epochs']}")
+                print(f"  KL Weight (α): {model.alpha:.6f}")
 
                 print(f"  Train Loss: {train_loss:.6f}")
                 print(f"  Train Recon Loss: {train_recon_loss:.6f}")
@@ -371,24 +388,28 @@ def site_specific_train(
             if wandb_run:
                 wandb_run.log(
                     {
-                        f"{site_name}/train_loss": train_loss,
-                        f"{site_name}/train_recon_loss": train_recon_loss,
-                        f"{site_name}/train_kl_loss": train_kl_loss,
-                        f"{site_name}/train_contrastive_loss": train_contrastive_loss,
-                        f"{site_name}/val_loss": val_loss,
-                        f"{site_name}/val_recon_loss": val_recon_loss,
-                        f"{site_name}/val_kl_loss": val_kl_loss,
-                        f"{site_name}/val_contrastive_loss": val_contrastive_loss,
-                        f"{site_name}/learning_rate": optimizer.param_groups[0]["lr"],
+                        "train_loss": train_loss,
+                        "train_recon_loss": train_recon_loss,
+                        "train_kl_loss": train_kl_loss,
+                        "train_contrastive_loss": train_contrastive_loss,
+                        "val_loss": val_loss,
+                        "val_recon_loss": val_recon_loss,
+                        "val_kl_loss": val_kl_loss,
+                        "val_contrastive_loss": val_contrastive_loss,
+                        "learning_rate": optimizer.param_groups[0]["lr"],
+                        "kl_weight_alpha": model.alpha,
                         "epoch": epoch,
                     }
                 )
-            else:
-                with open(model_dir / "loss_log.csv", "a") as f:
-                    # write header if file is empty
-                    if f.tell() == 0:
-                        f.write("epoch,train_loss,train_recon_loss,train_kl_loss,train_contrastive_loss,val_loss,val_recon_loss,val_kl_loss,val_contrastive_loss\n")
-                    f.write(f"{epoch},{train_loss},{train_recon_loss},{train_kl_loss},{train_contrastive_loss},{val_loss},{val_recon_loss},{val_kl_loss},{val_contrastive_loss}\n")
+            with open(model_dir / "loss_log.csv", "a") as f:
+                # write header if file is empty
+                if f.tell() == 0:
+                    f.write(
+                        "epoch,kl_weight_alpha,train_loss,train_recon_loss,train_kl_loss,train_contrastive_loss,val_loss,val_recon_loss,val_kl_loss,val_contrastive_loss\n"
+                    )
+                f.write(
+                    f"{epoch},{model.alpha},{train_loss},{train_recon_loss},{train_kl_loss},{train_contrastive_loss},{val_loss},{val_recon_loss},{val_kl_loss},{val_contrastive_loss}\n"
+                )
 
             if patience_counter >= patience:
                 print(f"Early stopping at epoch {epoch} for site {site_name}")
@@ -402,6 +423,17 @@ def site_specific_train(
     with open(data_config.artifact.site_specific_dir / f"{site_name}_latest_run.txt", "w") as f:
         f.write(model_dir.name)
 
+    if wandb_run:
+        with open(model_dir / "best_model_info.json") as f:
+            best_model_info = json.load(f)
+        checkpoint_path = Path(best_model_info["checkpoint_path"])
+        artifact = wandb.Artifact("site_specific", type="model", metadata=best_model_info)
+        artifact.add_file(
+            local_path=checkpoint_path,
+            name=f"site_specific/{checkpoint_path.name}",
+        )
+        wandb_run.log_artifact(artifact)
+
     return model, model_dir / "best_model_info.json"
 
 
@@ -412,14 +444,14 @@ if __name__ == "__main__":
     data_config = DataConfig.from_yaml("./yamls/data.yaml")
     model_config = CLVAEConfig.from_yaml("./yamls/model_clvae.yaml")
 
-    pretrained_model_path = data_config.artifact.pretrain_dir / "pretrain_20250804_180028" / "pretrained_model_39.pth"
+    pretrained_model_path = "artifacts/pretrain/pretrain_20250814_091623/pretrained_model_48.pth"
     site_name = "bolivia"
 
     test_kwargs = {
-        # "max_epochs": 2,
+        "max_epochs": 2,
         "batch_size": 128,
-        # "early_stopping_patience": 2,
-        # "scheduler_patience": 1,
+        "early_stopping_patience": 2,
+        "scheduler_patience": 1,
     }
     if use_wandb:
         with wandb.init(

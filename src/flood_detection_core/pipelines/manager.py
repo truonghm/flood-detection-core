@@ -3,15 +3,20 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 from pydantic import BaseModel
 from rich import print
 
 import wandb
 from wandb.sdk.wandb_run import Run
+from .eval import load_ground_truths, test_thresholds
+from .predict import generate_distance_maps
 from .pretrain import pretrain
 from .site_specific import site_specific_train
+from .utils import get_pretrain_run_name, get_site_specific_run_name
 from flood_detection_core.config import CLVAEConfig, DataConfig
 from flood_detection_core.models.clvae import CLVAE
+from flood_detection_core.utils import get_best_model_info, get_site_specific_latest_run
 
 
 class TrainingMode(str, Enum):
@@ -70,9 +75,11 @@ class TrainingManager:
         self.wandb_pretrain_name = "clvae-pretrain"
         self.wandb_site_specific_name = "clvae-site-specific"
         self.wandb_tags = ["clvae"]
+        self.wandb_group = "experiment-" + wandb.util.generate_id()
 
     def pretrain(
         self,
+        run_name: str | None = None,
         wandb_run: Run | None = None,
         resume_checkpoint: Path | str | None = None,
         **kwargs: Any,
@@ -80,6 +87,7 @@ class TrainingManager:
         return pretrain(
             data_config=self.data_config,
             model_config=self.model_config,
+            run_name=run_name,
             wandb_run=wandb_run,
             resume_checkpoint=resume_checkpoint,
             **kwargs,
@@ -88,6 +96,7 @@ class TrainingManager:
     def site_specific(
         self,
         site: str,
+        run_name: str | None = None,
         wandb_run: Run | None = None,
         pretrained_model_path: Path | str | None = None,
         resume_checkpoint: Path | str | None = None,
@@ -96,11 +105,27 @@ class TrainingManager:
         return site_specific_train(
             data_config=self.data_config,
             model_config=self.model_config,
+            run_name=run_name,
             site_name=site,
             wandb_run=wandb_run,
             pretrained_model_path=pretrained_model_path,
             resume_checkpoint=resume_checkpoint,
             **kwargs,
+        )
+
+    def predict(
+        self,
+        site: str,
+        wandb_run: Run | None = None,
+        model_path: Path | str | None = None,
+    ) -> dict[str, np.ndarray]:
+        return generate_distance_maps(
+            site=site,
+            data_config=self.data_config,
+            model_config=self.model_config,
+            model_path=model_path,
+            wandb_run=wandb_run,
+            log_latents=True,
         )
 
     def run(
@@ -109,6 +134,8 @@ class TrainingManager:
         use_wandb: bool = False,
         pretrain_extra_tags: list[str] | None = None,
         site_specific_extra_tags: list[str] | None = None,
+        eval_extra_tags: list[str] | None = None,
+        inference_extra_tags: list[str] | None = None,
     ):
         """
         How to set up TrainingInput:
@@ -144,6 +171,10 @@ class TrainingManager:
         training_input = TrainingInput(**training_input_raw)
         ```
         """
+
+        # step 1: pretrain
+
+        pretrain_run_name = get_pretrain_run_name()
         if training_input.pretrain:
             if training_input.pretrain.mode == TrainingMode.RESUME:
                 print(f"Resuming pretrain from {training_input.pretrain.path}")
@@ -158,24 +189,30 @@ class TrainingManager:
             if use_wandb:
                 with wandb.init(
                     project=self.wandb_project,
-                    name=self.wandb_pretrain_name,
-                    tags=self.wandb_tags + ["pretrain"] + (pretrain_extra_tags or []),
+                    name=pretrain_run_name,
+                    group=self.wandb_group,
+                    job_type="pre-training",
+                    tags=self.wandb_tags + (pretrain_extra_tags or []),
                 ) as run:
                     _, model_info_path = self.pretrain(
-                        wandb_run=run, resume_checkpoint=training_input.pretrain.path, **training_input.pretrain.kwargs
+                        run_name=pretrain_run_name,
+                        wandb_run=run, resume_checkpoint=training_input.pretrain.path, **training_input.pretrain.kwargs,
                     )
             else:
                 _, model_info_path = self.pretrain(
-                    resume_checkpoint=training_input.pretrain.path, **training_input.pretrain.kwargs
+                    run_name=pretrain_run_name,
+                    wandb_run=None, resume_checkpoint=training_input.pretrain.path, **training_input.pretrain.kwargs
                 )
 
             with open(model_info_path) as f:
                 model_info = json.load(f)
             training_input.pretrain.path = model_info["checkpoint_path"]
 
+        # step 2: site-specific training
         print("Starting site-specific")
         for site_specific_input in training_input.site_specific:
             site_name = site_specific_input.site
+            site_specific_run_name = get_site_specific_run_name(site_name)
             print(f"Starting site-specific for {site_name}")
             if site_specific_input.mode == TrainingMode.FRESH:
                 print(f"Starting fresh site-specific for {site_name}")
@@ -198,12 +235,75 @@ class TrainingManager:
             if use_wandb:
                 with wandb.init(
                     project=self.wandb_project,
-                    name=self.wandb_site_specific_name,
-                    tags=self.wandb_tags + ["site-specific", site_name] + (site_specific_extra_tags or []),
+                    name=site_specific_run_name,
+                    group=self.wandb_group,
+                    job_type="training",
+                    tags=self.wandb_tags + (site_specific_extra_tags or []) + [site_name],
                 ) as run:
-                    self.site_specific(site=site_name, wandb_run=run, **kwargs)
+                    self.site_specific(site=site_name, run_name=site_specific_run_name, wandb_run=run, **kwargs)
             else:
-                self.site_specific(site=site_name, **kwargs)
+                self.site_specific(site=site_name, run_name=site_specific_run_name, wandb_run=None, **kwargs)
+
+        # step 3: predict
+        print("Starting predict")
+        for site_specific_input in training_input.site_specific:
+            site_name = site_specific_input.site
+            print(f"Starting prediction and eval for {site_name}")
+            latest_run = get_site_specific_latest_run(site_name, self.data_config)
+            model_info = get_best_model_info(self.data_config.artifact.site_specific_dir / latest_run)
+            model_path = Path(model_info["checkpoint_path"])
+            if use_wandb:
+                with wandb.init(
+                    project=self.wandb_project,
+                    group=self.wandb_group,
+                    job_type="predict",
+                    tags=self.wandb_tags + (inference_extra_tags or []) + [site_name],
+                ) as run:
+                    distance_maps = self.predict(site=site_name, wandb_run=run, model_path=model_path)
+            else:
+                distance_maps = self.predict(site=site_name, wandb_run=None, model_path=model_path)
+
+            ground_truths = load_ground_truths(site=site_name, data_config=self.data_config)
+
+            th_test_df = test_thresholds(
+                thresholds=[
+                    0.001,
+                    0.005,
+                    0.009,
+                    0.01,
+                    0.03,
+                    0.05,
+                    0.07,
+                    0.1,
+                    0.2,
+                    0.3,
+                    0.4,
+                    0.5,
+                    0.7,
+                    0.9,
+                    0.95,
+                    0.99,
+                    1.0,
+                    1.2,
+                ],
+                distance_maps=distance_maps,
+                ground_truths=ground_truths,
+            )
+
+            if use_wandb:
+                with wandb.init(
+                    project=self.wandb_project,
+                    group=self.wandb_group,
+                    job_type="eval",
+                    tags=self.wandb_tags + (eval_extra_tags or []) + [site_name],
+                ) as run:
+                    th_test_df_wandb = wandb.Table(dataframe=th_test_df)
+                    run.log(
+                        {
+                            f"{site_name}'s test metrics": th_test_df_wandb,
+                        }
+                    )
+            th_test_df.to_csv(model_path.parent / "th_test.csv", index=False)
 
 
 if __name__ == "__main__":

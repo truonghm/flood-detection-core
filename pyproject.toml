@@ -26,6 +26,7 @@ dependencies = [
     "torchmetrics>=1.8.0",
     "optuna>=4.4.0",
     "numba>=0.61.2",
+    "pandas>=2.2.3",
 ]
 
 [build-system]

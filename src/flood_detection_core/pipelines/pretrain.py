@@ -1,6 +1,5 @@
 # TODO: scale with multi-gpu setup
 
-import datetime
 import json
 from pathlib import Path
 from typing import Any
@@ -12,6 +11,7 @@ from torch.utils.data import DataLoader
 
 import wandb
 from wandb.sdk.wandb_run import Run
+from .utils import get_pretrain_run_name
 from flood_detection_core.config import CLVAEConfig, DataConfig
 from flood_detection_core.data.datasets import PretrainDataset
 from flood_detection_core.data.processing.augmentation import augment_data
@@ -21,6 +21,7 @@ from flood_detection_core.models.clvae import CLVAE
 def pretrain(
     data_config: DataConfig,
     model_config: CLVAEConfig,
+    run_name: str | None = None,
     wandb_run: Run | None = None,
     resume_checkpoint: Path | str | None = None,
     **kwargs: Any,
@@ -56,8 +57,8 @@ def pretrain(
     if wandb_run:
         wandb_run.config.update(config)
 
-    current_date = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    model_dir = data_config.artifact.pretrain_dir / f"pretrain_{current_date}"
+    run_name = run_name or get_pretrain_run_name()
+    model_dir = data_config.artifact.pretrain_dir / run_name
     model_dir.mkdir(parents=True, exist_ok=True)
     with open(model_dir / "config.json", "w") as f:
         json.dump(config, f)
@@ -170,6 +171,14 @@ def pretrain(
             print(f"Epoch {epoch}, Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}")
             if wandb_run:
                 wandb_run.log({"train_loss": train_loss, "val_loss": val_loss})
+            with open(model_dir / "loss_log.csv", "a") as f:
+                if f.tell() == 0:
+                    f.write(
+                        "epoch,train_loss,val_loss\n"
+                    )
+                f.write(
+                    f"{epoch},{train_loss},{val_loss}\n"
+                )
 
         if patience_counter >= patience:
             print(f"Early stopping at epoch {epoch}")
@@ -180,6 +189,17 @@ def pretrain(
 
     with open(data_config.artifact.pretrain_dir / "latest_run.txt", "w") as f:
         f.write(model_dir.name)
+
+    if wandb_run:
+        with open(model_dir / "best_model_info.json") as f:
+            best_model_info = json.load(f)
+        checkpoint_path = Path(best_model_info["checkpoint_path"])
+        artifact = wandb.Artifact("pretrain", type="model", metadata=best_model_info)
+        artifact.add_file(
+            local_path=checkpoint_path,
+            name=f"pretrain/{checkpoint_path.name}",
+        )
+        wandb_run.log_artifact(artifact)
 
     return model, model_dir / "best_model_info.json"
 
