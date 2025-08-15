@@ -26,8 +26,8 @@ def pretrain(
     resume_checkpoint: Path | str | None = None,
     **kwargs: Any,
 ) -> tuple[CLVAE, Path]:
-    """
-    **Purpose**: Handles pre-training phase on pre-flood SAR images
+    """**Purpose**: Handles pre-training phase on pre-flood SAR images.
+
     **Logic**:
     - Loads PreTrainDataset with 100 random patches from various sites
     - 50 epochs training with early stopping (patience 10)
@@ -153,7 +153,7 @@ def pretrain(
                     "epoch": epoch,
                     "patience_counter": patience_counter,
                 },
-                checkpoint_path
+                checkpoint_path,
             )
 
             best_model_info = {
@@ -173,12 +173,8 @@ def pretrain(
                 wandb_run.log({"train_loss": train_loss, "val_loss": val_loss})
             with open(model_dir / "loss_log.csv", "a") as f:
                 if f.tell() == 0:
-                    f.write(
-                        "epoch,train_loss,val_loss\n"
-                    )
-                f.write(
-                    f"{epoch},{train_loss},{val_loss}\n"
-                )
+                    f.write("epoch,train_loss,val_loss\n")
+                f.write(f"{epoch},{train_loss},{val_loss}\n")
 
         if patience_counter >= patience:
             print(f"Early stopping at epoch {epoch}")
@@ -205,8 +201,8 @@ def pretrain(
 
 
 if __name__ == "__main__":
-    data_config = DataConfig.from_yaml("./yamls/data.yaml")
-    model_config = CLVAEConfig.from_yaml("./yamls/model_clvae.yaml")
+    data_config = DataConfig.from_yaml("./flood-detection-core/yamls/data.yaml")
+    model_config = CLVAEConfig.from_yaml("./flood-detection-core/yamls/model_clvae.yaml")
 
     use_wandb = False
 

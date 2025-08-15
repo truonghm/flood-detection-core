@@ -19,10 +19,11 @@ def _read_tif_hw2(path: Path) -> np.ndarray:
     return data
 
 
-def _normalize(
-    img_hw2: np.ndarray, vv_range: tuple[float, float], vh_range: tuple[float, float]
-) -> np.ndarray:
-    """Normalize only, assuming img has channels [VV, VH]. Returns [0,1] scaled copy."""
+def _normalize(img_hw2: np.ndarray, vv_range: tuple[float, float], vh_range: tuple[float, float]) -> np.ndarray:
+    """Normalize only, assuming img has channels [VV, VH].
+
+    Returns [0,1] scaled copy.
+    """
     vv_low, vv_high = vv_range
     vh_low, vh_high = vh_range
     out = img_hw2.copy()
@@ -49,8 +50,7 @@ def _reflect_pad(arr: np.ndarray, pad: int) -> np.ndarray:
 
 
 class FloodDetectionDataset(Dataset):
-    """
-    High-performance inference dataset for CLVAE change detection.
+    """High-performance inference dataset for CLVAE change detection.
 
     - Uses tile-level caching: pre-loads 4 pre-flood images and 1 post-flood image per tile once, then
       serves stride-1 patches by slicing (no per-patch file IO).
@@ -255,12 +255,9 @@ class FloodDetectionDataset(Dataset):
 
 if __name__ == "__main__":
     # Quick smoke test
-    try:
-        data_cfg = DataConfig.from_yaml(Path("./flood_detection_core/yamls/data.yaml"))
-        clvae_cfg = CLVAEConfig.from_yaml(Path("./flood_detection_core/yamls/model_clvae.yaml"))
-    except Exception:
-        data_cfg = DataConfig.from_yaml(Path("./yamls/data.yaml"))
-        clvae_cfg = CLVAEConfig.from_yaml(Path("./yamls/model_clvae.yaml"))
+
+    data_cfg = DataConfig.from_yaml(Path("./flood-detection-core/yamls/data.yaml"))
+    clvae_cfg = CLVAEConfig.from_yaml(Path("./flood-detection-core/yamls/model_clvae.yaml"))
 
     ds = FloodDetectionDataset(
         dataset_type="test",

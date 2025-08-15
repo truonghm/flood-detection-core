@@ -4,9 +4,9 @@ import typer
 
 app = typer.Typer()
 
-default_data_config_path = "./yamls/data.yaml"
-default_model_config_path = "./yamls/model_clvae.yaml"
-default_download_config_path = "./yamls/gee.yaml"
+default_data_config_path = "./flood-detection-core/yamls/data.yaml"
+default_model_config_path = "./flood-detection-core/yamls/model_clvae.yaml"
+default_download_config_path = "./flood-detection-core/yamls/gee.yaml"
 
 
 @app.command()

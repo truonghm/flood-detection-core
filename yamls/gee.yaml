@@ -16,4 +16,3 @@ preprocessing:
   vv_clip_upper_bound: 0
   vh_clip_lower_bound: -28
   vh_clip_upper_bound: -5
-

@@ -412,8 +412,8 @@ if __name__ == "__main__":
     from flood_detection_core.config import CLVAEConfig, DataConfig
 
     use_wandb = False
-    data_config = DataConfig.from_yaml("./yamls/data.yaml")
-    model_config = CLVAEConfig.from_yaml("./yamls/model_clvae.yaml")
+    data_config = DataConfig.from_yaml("./flood-detection-core/yamls/data.yaml")
+    model_config = CLVAEConfig.from_yaml("./flood-detection-core/yamls/model_clvae.yaml")
 
     pretrained_model_path = "artifacts/pretrain/pretrain_20250814_091623/pretrained_model_48.pth"
     site_name = "bolivia"

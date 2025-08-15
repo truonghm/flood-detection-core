@@ -9,9 +9,8 @@ from flood_detection_core.data.processing.patches import PreTrainPatchesExtracto
 
 
 class PretrainDataset(Dataset):
-    """
-    Dataset for CLVAE pre-training phase.
-    Loads 100 random patches with 4 pre-flood images each for learning basic SAR patterns.
+    """Dataset for CLVAE pre-training phase. Loads 100 random patches with 4 pre-flood images each for learning
+    basic SAR patterns.
 
     Expected output format:
     - Pre-flood image sequences: (time_steps, channels, height, width) = (T, C, H, W)
@@ -61,8 +60,8 @@ if __name__ == "__main__":
 
     from flood_detection_core.config import CLVAEConfig, DataConfig
 
-    data_config = DataConfig.from_yaml("./yamls/data.yaml")
-    model_config = CLVAEConfig.from_yaml("./yamls/model_clvae.yaml")
+    data_config = DataConfig.from_yaml("./flood-detection-core/yamls/data.yaml")
+    model_config = CLVAEConfig.from_yaml("./flood-detection-core/yamls/model_clvae.yaml")
 
     pretrain_dataset = PretrainDataset(
         split_csv_path=data_config.splits.pre_flood_split,

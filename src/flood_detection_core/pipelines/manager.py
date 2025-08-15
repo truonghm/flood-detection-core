@@ -199,12 +199,16 @@ class TrainingManager:
                 ) as run:
                     _, model_info_path = self.pretrain(
                         run_name=pretrain_run_name,
-                        wandb_run=run, resume_checkpoint=training_input.pretrain.path, **training_input.pretrain.kwargs,
+                        wandb_run=run,
+                        resume_checkpoint=training_input.pretrain.path,
+                        **training_input.pretrain.kwargs,
                     )
             else:
                 _, model_info_path = self.pretrain(
                     run_name=pretrain_run_name,
-                    wandb_run=None, resume_checkpoint=training_input.pretrain.path, **training_input.pretrain.kwargs
+                    wandb_run=None,
+                    resume_checkpoint=training_input.pretrain.path,
+                    **training_input.pretrain.kwargs,
                 )
 
             with open(model_info_path) as f:
@@ -314,8 +318,8 @@ class TrainingManager:
 if __name__ == "__main__":
     from flood_detection_core.config import CLVAEConfig, DataConfig
 
-    data_config = DataConfig.from_yaml("./yamls/data.yaml")
-    model_config = CLVAEConfig.from_yaml("./yamls/model_clvae.yaml")
+    data_config = DataConfig.from_yaml("./flood-detection-core/yamls/data.yaml")
+    model_config = CLVAEConfig.from_yaml("./flood-detection-core/yamls/model_clvae.yaml")
 
     training_input_raw = {
         "pretrain": {

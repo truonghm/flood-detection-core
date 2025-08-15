@@ -16,3 +16,13 @@ hand_labeled_sen1flood11:
   ground_truth: "data/flood_events/HandLabeled/LabelHand"
   post_flood_s1: "data/flood_events/HandLabeled/S1Hand"
   post_flood_s2: "data/flood_events/HandLabeled/S2Hand"
+
+artifact:
+  data_dir: "./artifacts"
+  pretrain_dir: "pretrain"
+  site_specific_dir: "site_specific"
+
+splits:
+  data_dir: "./data/splits"
+  pre_flood_split: "pre_flood_split.csv"
+  post_flood_split: "post_flood_split.csv"

@@ -17,8 +17,7 @@ from flood_detection_core.data.processing.utils import get_image_size_v2 as get_
 
 
 class SiteSpecificTrainingDataset(Dataset):
-    """
-    Dataset for site-specific training using only pre-flood images.
+    """Dataset for site-specific training using only pre-flood images.
 
     Provides pairs of pre-flood sequences (P1, P2) from different tiles within the same site.
     Uses grid-based sampling to extract all possible patches from tile pairs.
@@ -74,9 +73,7 @@ class SiteSpecificTrainingDataset(Dataset):
         self._image_cache_capacity: int = 128
 
         # Build mapping: site -> tile -> list[pre_flood_paths]
-        self.site_tile_to_paths = self._load_pre_flood_split_csv(
-            self.pre_flood_split_csv_path, set(self.sites)
-        )
+        self.site_tile_to_paths = self._load_pre_flood_split_csv(self.pre_flood_split_csv_path, set(self.sites))
 
         # Build list of tile pairs per site
         site_tile_pairs: list[tuple[str, str, str]] = []  # (site, tileA, tileB)
@@ -130,7 +127,7 @@ class SiteSpecificTrainingDataset(Dataset):
                     # Use deterministic sampling based on pair_idx for reproducibility
                     rng = random.Random(self._base_seed + pair_idx)
                     rng.shuffle(coords)
-                    coords = coords[:self.max_patches_per_pair]
+                    coords = coords[: self.max_patches_per_pair]
 
                 # Add all coordinates for this pair
                 for i, j in coords:
@@ -241,12 +238,10 @@ class SiteSpecificTrainingDataset(Dataset):
 
             # Extract patches at the pre-computed coordinates
             patches_a = [
-                self._get_image_array(Path(p))[i : i + self.patch_size, j : j + self.patch_size, :]
-                for p in seq_paths_a
+                self._get_image_array(Path(p))[i : i + self.patch_size, j : j + self.patch_size, :] for p in seq_paths_a
             ]
             patches_b = [
-                self._get_image_array(Path(p))[i : i + self.patch_size, j : j + self.patch_size, :]
-                for p in seq_paths_b
+                self._get_image_array(Path(p))[i : i + self.patch_size, j : j + self.patch_size, :] for p in seq_paths_b
             ]
 
             seq_a = np.stack([np.ascontiguousarray(p) for p in patches_a], axis=0)
@@ -286,8 +281,8 @@ class SiteSpecificTrainingDataset(Dataset):
 if __name__ == "__main__":
     from torch.utils.data import DataLoader
 
-    data_config = DataConfig.from_yaml(Path("./yamls/data.yaml"))
-    clvae_config = CLVAEConfig.from_yaml(Path("./yamls/model_clvae.yaml"))
+    data_config = DataConfig.from_yaml(Path("./flood-detection-core/yamls/data.yaml"))
+    clvae_config = CLVAEConfig.from_yaml(Path("./flood-detection-core/yamls/model_clvae.yaml"))
 
     dataset = SiteSpecificTrainingDataset(
         pre_flood_split_csv_path=data_config.splits.pre_flood_split,

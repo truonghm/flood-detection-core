@@ -1,0 +1,52 @@
+pretrain:
+  num_patches: 100
+  num_temporal_length: 4
+  patch_size: 16
+  input_channels: 2
+  hidden_channels: 64
+  latent_dim: 128
+  learning_rate: 0.001
+  max_epochs: 50
+  scheduler_patience: 5
+  scheduler_factor: 0.1
+  scheduler_min_lr: 0.00001
+  early_stopping_patience: 10
+  batch_size: 128
+
+site_specific:
+  num_temporal_length: 4
+  patch_size: 16
+  patch_stride: 2
+  input_channels: 2
+  hidden_channels: 64
+  latent_dim: 128
+  learning_rate: 0.0001
+  max_epochs: 50
+  scheduler_patience: 3
+  scheduler_factor: 0.1
+  scheduler_min_lr: 0.000001
+  batch_size: 32
+  early_stopping_patience: 8
+  # Loss weights (from paper Equation 1)
+  alpha: 0.1  # KL divergence weight (paper value)
+  beta: 0.7  # Reconstruction loss weight (paper value)
+
+inference:
+  num_temporal_length: 4
+  patch_size: 16
+  patch_stride: 1
+  pad_size: 8
+  batch_size: 512
+  threshold: 0.5
+  post_flood_vh_clipped_range: [-28, -5]
+  post_flood_vv_clipped_range: [-23, 0]
+
+augmentation:
+  geometric:
+    left_right: 0.5
+    up_down: 0.2
+    rotate: [-90, 90]
+  non_geometric:
+    gaussian_blur: 0.3
+    gamma_contrast_prob: 0.5
+    gamma_contrast: [0.25, 2.0]
