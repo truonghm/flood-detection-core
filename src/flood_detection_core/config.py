@@ -83,7 +83,7 @@ class GEEDataConfig(DataDirConfig):
         return list(self.pre_flood_dir.glob(f"{site_name}/{tile_name}/*.tif"))
 
     def get_pre_flood_site_paths(self, site_name: str) -> list[Path]:
-        return list(self.pre_flood_dir.glob(f"{site_name}/{site_name.capitalize()}_/*.tif"))
+        return list(self.pre_flood_dir.glob(f"{site_name}/{site_name.capitalize()}_*/*.tif"))
 
     def get_all_pre_flood_tiles_paths(self) -> list[Path]:
         return list(self.pre_flood_dir.glob("*/*/*.tif"))

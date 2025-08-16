@@ -6,7 +6,7 @@ from typing import Literal
 from rich import print
 
 from flood_detection_core.config import DataConfig
-from flood_detection_core.data.constants import HandLabeledSen1Flood11Sites
+from flood_detection_core.data.constants import BOLIVIA_ALLOWED_TILES, HandLabeledSen1Flood11Sites
 
 
 @dataclass
@@ -17,11 +17,15 @@ class SplitRatio:
     test: float
 
 
-def split_data(data_config: DataConfig, ) -> None:
+def split_data(
+    data_config: DataConfig,
+) -> None:
     site_tiles_mapping = {}
     for site in HandLabeledSen1Flood11Sites:
         tile_dir_paths = list(data_config.gee.pre_flood_dir.glob(f"{site}/*/"))
         tiles = [tile_dir_path.name for tile_dir_path in tile_dir_paths]
+        if site == "bolivia":
+            tiles = [tile for tile in tiles if tile in BOLIVIA_ALLOWED_TILES]
         n_tiles = len(tiles)
 
         train_val_tiles = test_tiles = pretrain_tiles = tiles

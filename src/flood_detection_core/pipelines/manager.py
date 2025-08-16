@@ -78,7 +78,7 @@ class TrainingManager:
         self.wandb_group = "experiment-" + wandb.util.generate_id()
 
     def _get_current_datetime(self) -> str:
-        return datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        return datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=7))).strftime("%Y%m%d_%H%M%S")
 
     def pretrain(
         self,

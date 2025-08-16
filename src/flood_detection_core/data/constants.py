@@ -7,7 +7,9 @@ class HandLabeledSen1Flood11Site(str, Enum):
     SOMALIA = "somalia"
     SPAIN = "spain"
 
+
 HandLabeledSen1Flood11Sites = [s.value for s in HandLabeledSen1Flood11Site]
+
 
 class WeaklyLabeledSen1Flood11Site(str, Enum):
     BOLIVIA = "bolivia"
@@ -23,12 +25,23 @@ class WeaklyLabeledSen1Flood11Site(str, Enum):
     SRILANKA = "sri-lanka"
     USA = "usa"
 
+
 WeaklyLabeledSen1Flood11Sites = [s.value for s in WeaklyLabeledSen1Flood11Site]
+
+BOLIVIA_ALLOWED_TILES = [
+    "Bolivia_312675",
+    "Bolivia_432776",
+    "Bolivia_294583",
+    "Bolivia_23014",
+    "Bolivia_314919",
+    "Bolivia_129334",
+]
 
 # because some sites have different names in the metadata
 EquivalentNameMapping: dict[str, str] = {
     "cambodia": "mekong",
 }
+
 
 class HandLabeledCatalogSubdir(str, Enum):
     LABEL = "sen1floods11_hand_labeled_label"
