@@ -236,22 +236,19 @@ class ConvLSTMDecoder(nn.Module):
         # Match encoder's final channel count (16)
         self.fc_expand = nn.Linear(latent_dim, 16 * 1 * 4 * 4)
 
-        # Three transpose convolution layers as per paper
-        # Reverse the encoder's channel progression: 16 -> 32 -> 64 -> 2
         self.conv_transpose1 = nn.ConvTranspose3d(16, 32, kernel_size=3, stride=2, padding=1, output_padding=1)
         self.bn1 = nn.BatchNorm3d(32)
+        self.merge_conv1 = nn.Conv3d(32 + 16, 32, kernel_size=1)
 
         self.conv_transpose2 = nn.ConvTranspose3d(
             32, hidden_channels, kernel_size=3, stride=2, padding=1, output_padding=1
         )
         self.bn2 = nn.BatchNorm3d(hidden_channels)
+        self.merge_conv2 = nn.Conv3d(hidden_channels + 32, hidden_channels, kernel_size=1)
 
         self.conv_transpose3 = nn.ConvTranspose3d(hidden_channels, output_channels, kernel_size=3, stride=1, padding=1)
         self.bn3 = nn.BatchNorm3d(output_channels)
-
-        # 1x1 conv for skip connection channel matching
-        self.skip_conv1 = nn.Conv3d(16, 32, kernel_size=1)  # Match res2_out to deconv1 output
-        self.skip_conv2 = nn.Conv3d(32, hidden_channels, kernel_size=1)  # Match res1_out to deconv2 output
+        self.merge_conv3 = nn.Conv3d(output_channels + hidden_channels, output_channels, kernel_size=1)
 
     def forward(
         self,
@@ -285,51 +282,36 @@ class ConvLSTMDecoder(nn.Module):
         out = F.relu(out)
         out = out.view(batch_size, 16, 1, 4, 4)  # (batch, 16, 1, 4, 4)
 
-        # First transpose convolution
-        out = self.conv_transpose1(out)  # (batch, 32, 2, 8, 8)
+        out = self.conv_transpose1(out)
         out = self.bn1(out)
+        out = F.relu(out)
 
-        # Add skip connection from res_block2 if available
         if encoder_features is not None and len(encoder_features) > 2:
-            skip_feat = encoder_features[2]  # res2_out: (batch, 16, T/4, 4, 4)
-            # Upsample skip feature to match decoder resolution
+            skip_feat = encoder_features[2]
             skip_feat = F.interpolate(skip_feat, size=(out.shape[2], 8, 8), mode="trilinear", align_corners=False)
-            skip_feat = self.skip_conv1(skip_feat)  # 16 -> 32 channels
-            out = out + skip_feat
+            out = torch.cat([out, skip_feat], dim=1)
+            out = self.merge_conv1(out)
+            out = F.relu(out)
 
-        out = F.relu(out)
-
-        # Second transpose convolution
-        out = self.conv_transpose2(out)  # (batch, 64, 4, 16, 16)
+        out = self.conv_transpose2(out)
         out = self.bn2(out)
-
-        # Add skip connection from res_block1 if available
-        if encoder_features is not None and len(encoder_features) > 1:
-            skip_feat = encoder_features[1]  # res1_out: (batch, 32, T/2, 8, 8)
-            # Upsample skip feature to match decoder resolution
-            skip_feat = F.interpolate(skip_feat, size=(out.shape[2], 16, 16), mode="trilinear", align_corners=False)
-            skip_feat = self.skip_conv2(skip_feat)  # 32 -> 64 channels
-            out = out + skip_feat
-
         out = F.relu(out)
 
-        # Third transpose convolution (final output channels)
-        out = self.conv_transpose3(out)  # (batch, 2, 4, 16, 16)
+        if encoder_features is not None and len(encoder_features) > 1:
+            skip_feat = encoder_features[1]
+            skip_feat = F.interpolate(skip_feat, size=(out.shape[2], 16, 16), mode="trilinear", align_corners=False)
+            out = torch.cat([out, skip_feat], dim=1)
+            out = self.merge_conv2(out)
+            out = F.relu(out)
+
+        out = self.conv_transpose3(out)
         out = self.bn3(out)
 
-        # Add skip connection from ConvLSTM output if available
         if encoder_features is not None and len(encoder_features) > 0:
-            skip_feat = encoder_features[0]  # conv_lstm_out: (batch, 64, T, 16, 16)
-            # Need to reduce channels from 64 to 2 for final skip
-            # Use average along channel dim as simple projection
-            if skip_feat.shape[1] != self.output_channels:
-                # Take first 2 channels or use 1x1 conv
-                skip_feat = skip_feat[:, : self.output_channels]  # (batch, 2, T, 16, 16)
-            # Match temporal dimension
+            skip_feat = encoder_features[0]
             skip_feat = F.interpolate(skip_feat, size=(out.shape[2], 16, 16), mode="trilinear", align_corners=False)
-            out = out + skip_feat
-
-        # No activation after final layer (logits for BCE loss)
+            out = torch.cat([out, skip_feat], dim=1)
+            out = self.merge_conv3(out)
 
         # Adjust temporal dimension if needed
         if target_time_steps is not None and out.shape[2] != target_time_steps:
@@ -458,32 +440,38 @@ class CLVAE(nn.Module):
         # KL divergence loss
         kl_loss = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp()) / batch_size
 
-        # Contrastive loss on latent representations
-        # This forces the encoder to learn diverse representations for different spatial patches
         contrastive_loss = torch.tensor(0.0, device=x.device)
+        diversity_loss = torch.tensor(0.0, device=x.device)
+        variance_loss = torch.tensor(0.0, device=x.device)
+
         if z is not None and contrastive_z is not None:
-            # Normalize latent codes for stable cosine similarity
             z1_norm = F.normalize(z, p=2, dim=1)
             z2_norm = F.normalize(contrastive_z, p=2, dim=1)
-
-            # Cosine similarity between latent representations
             cos_sim = F.cosine_similarity(z1_norm, z2_norm, dim=1)
-
-            # We want to minimize similarity (maximize diversity) between different patches
-            # cos_sim ranges from -1 to 1, we want it closer to -1 or 0 (orthogonal/opposite)
-            # Loss = (cos_sim + 1) / 2 to scale to [0, 1] where 0 is most different
             contrastive_loss = torch.mean((cos_sim + 1) / 2)
 
-        # Total loss (following paper's equation 1)
-        # L_Total = α*L_KL + β*L_Recon + (1-α-β)*L_Contrast
-        contrastive_weight = 1 - self.alpha - self.beta  # = 0.2
-        total_loss = self.alpha * kl_loss + self.beta * recon_loss + contrastive_weight * contrastive_loss
+            latent_similarity = F.cosine_similarity(z, contrastive_z, dim=1)
+            diversity_loss = torch.mean(latent_similarity)
+
+            batch_variance = torch.var(z, dim=0).mean()
+            variance_loss = -batch_variance
+
+        contrastive_weight = 1 - self.alpha - self.beta
+        total_loss = (
+            self.alpha * kl_loss
+            + self.beta * recon_loss
+            + contrastive_weight * contrastive_loss
+            + 0.1 * diversity_loss
+            + 0.1 * variance_loss
+        )
 
         return {
             "total_loss": total_loss,
             "reconstruction_loss": recon_loss,
             "kl_loss": kl_loss,
             "contrastive_loss": contrastive_loss,
+            "diversity_loss": diversity_loss,
+            "variance_loss": variance_loss,
         }
 
     def encode(

@@ -27,10 +27,8 @@ site_specific:
   scheduler_min_lr: 0.000001
   batch_size: 32
   early_stopping_patience: 8
-  # Loss weights - gradually moving toward paper values (α=0.1, β=0.7)
-  alpha: 0.02  # KL weight: start small to maintain latent diversity
-  beta: 0.5  # Reconstruction weight: moving toward 0.7
-  # This gives contrastive weight = 1 - 0.02 - 0.5 = 0.48
+  alpha: 0.0  # No KL to prevent latent collapse
+  beta: 0.4  # Lower reconstruction to emphasize contrastive and diversity
   max_patches_per_pair: 128  # Keep low for fast validation
 
 inference:
