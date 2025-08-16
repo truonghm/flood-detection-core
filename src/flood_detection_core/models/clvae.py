@@ -135,13 +135,14 @@ class ConvLSTMEncoder(nn.Module):
         self.convlstm = ConvLSTM(input_channels, hidden_channels, kernel_size=3)
 
         # Two residual blocks with 3D convolutions
+        # Reduce channels progressively to match paper's parameter count
         self.res_block1 = ResidualBlock3D(hidden_channels, 32, stride=2)
         self.res_block2 = ResidualBlock3D(32, 16, stride=2)
 
         # Global average pooling
         self.global_pool = nn.AdaptiveAvgPool3d(1)
 
-        # Bottleneck dense layer
+        # Bottleneck dense layer (8 channels as per paper)
         self.bottleneck = nn.Linear(16, 8)
 
         # Separate dense layers for μ and σ
@@ -217,6 +218,9 @@ class ConvLSTMEncoder(nn.Module):
 class ConvLSTMDecoder(nn.Module):
     """Decoder component reconstructing input from latent representation.
 
+    Following paper architecture: Dense layer + 3x TransposeConv3D + Skip connections.
+    NO ConvLSTM in decoder as per paper methodology.
+
     Input: latent vector (batch, 128) → Output: (batch, T, 16, 16, 2)
     where T matches the target temporal length (typically input sequence length).
     """
@@ -229,23 +233,25 @@ class ConvLSTMDecoder(nn.Module):
         self.output_channels = output_channels
 
         # Dense layer to expand latent vector
-        self.fc_expand = nn.Linear(latent_dim, 16 * 4 * 4)
+        # Match encoder's final channel count (16)
+        self.fc_expand = nn.Linear(latent_dim, 16 * 1 * 4 * 4)
 
-        # Transpose convolution layers
+        # Three transpose convolution layers as per paper
+        # Reverse the encoder's channel progression: 16 -> 32 -> 64 -> 2
         self.conv_transpose1 = nn.ConvTranspose3d(16, 32, kernel_size=3, stride=2, padding=1, output_padding=1)
         self.bn1 = nn.BatchNorm3d(32)
 
-        self.conv_transpose2 = nn.ConvTranspose3d(32, 64, kernel_size=3, stride=2, padding=1, output_padding=1)
-        self.bn2 = nn.BatchNorm3d(64)
+        self.conv_transpose2 = nn.ConvTranspose3d(
+            32, hidden_channels, kernel_size=3, stride=2, padding=1, output_padding=1
+        )
+        self.bn2 = nn.BatchNorm3d(hidden_channels)
 
-        self.conv_transpose3 = nn.ConvTranspose3d(64, hidden_channels, kernel_size=3, stride=1, padding=1)
-        self.bn3 = nn.BatchNorm3d(hidden_channels)
+        self.conv_transpose3 = nn.ConvTranspose3d(hidden_channels, output_channels, kernel_size=3, stride=1, padding=1)
+        self.bn3 = nn.BatchNorm3d(output_channels)
 
-        # Final ConvLSTM for temporal reconstruction
-        self.convlstm = ConvLSTM(hidden_channels, output_channels, kernel_size=3)
-
-        # Final output layer
-        self.final_conv = nn.Conv2d(output_channels, output_channels, kernel_size=1)
+        # 1x1 conv for skip connection channel matching
+        self.skip_conv1 = nn.Conv3d(16, 32, kernel_size=1)  # Match res2_out to deconv1 output
+        self.skip_conv2 = nn.Conv3d(32, hidden_channels, kernel_size=1)  # Match res1_out to deconv2 output
 
     def forward(
         self,
@@ -253,7 +259,7 @@ class ConvLSTMDecoder(nn.Module):
         encoder_features: list[torch.Tensor] | None = None,
         target_time_steps: int | None = None,
     ) -> torch.Tensor:
-        """Forward pass for decoder with optional skip connections.
+        """Forward pass for decoder with skip connections.
 
         Parameters
         ----------
@@ -261,63 +267,78 @@ class ConvLSTMDecoder(nn.Module):
             Latent vector of shape (batch, 128)
         encoder_features : Optional[list[torch.Tensor]]
             List of encoder features for skip connections
-            [conv_input, res1_out, res2_out] with shapes:
-            [(batch, 64, 4, 16, 16), (batch, 32, 2, 8, 8), (batch, 16, 1, 4, 4)]
+            [conv_lstm_out, res1_out, res2_out] with shapes:
+            [(batch, 64, T, 16, 16), (batch, 64, T/2, 8, 8), (batch, 64, T/4, 4, 4)]
+        target_time_steps : Optional[int]
+            Target temporal dimension for output
 
         Returns
         -------
-            Reconstructed tensor of shape (batch, 4, 16, 16, 2)
+            Reconstructed tensor of shape (batch, T, 16, 16, 2)
         """
         # Input validation
         assert z.dim() == 2, f"Expected 2D latent vector (batch, latent_dim), got {z.dim()}D"
         batch_size = z.size(0)
 
         # Expand latent vector
-        out = F.relu(self.fc_expand(z))  # (batch, 16*4*4)
+        out = self.fc_expand(z)  # (batch, 16*16)
+        out = F.relu(out)
         out = out.view(batch_size, 16, 1, 4, 4)  # (batch, 16, 1, 4, 4)
 
-        # Transpose convolutions with optional skip connections
-        out = F.relu(self.bn1(self.conv_transpose1(out)))  # (batch, 32, 2, 8, 8) when starting at 1
+        # First transpose convolution
+        out = self.conv_transpose1(out)  # (batch, 32, 2, 8, 8)
+        out = self.bn1(out)
+
+        # Add skip connection from res_block2 if available
+        if encoder_features is not None and len(encoder_features) > 2:
+            skip_feat = encoder_features[2]  # res2_out: (batch, 16, T/4, 4, 4)
+            # Upsample skip feature to match decoder resolution
+            skip_feat = F.interpolate(skip_feat, size=(out.shape[2], 8, 8), mode="trilinear", align_corners=False)
+            skip_feat = self.skip_conv1(skip_feat)  # 16 -> 32 channels
+            out = out + skip_feat
+
+        out = F.relu(out)
+
+        # Second transpose convolution
+        out = self.conv_transpose2(out)  # (batch, 64, 4, 16, 16)
+        out = self.bn2(out)
 
         # Add skip connection from res_block1 if available
-        if encoder_features is not None and len(encoder_features) >= 2:
-            skip_feat = encoder_features[1]  # res1_out: (batch, 32, 2, 8, 8)
-            if skip_feat.shape == out.shape:
-                out = out + skip_feat
+        if encoder_features is not None and len(encoder_features) > 1:
+            skip_feat = encoder_features[1]  # res1_out: (batch, 32, T/2, 8, 8)
+            # Upsample skip feature to match decoder resolution
+            skip_feat = F.interpolate(skip_feat, size=(out.shape[2], 16, 16), mode="trilinear", align_corners=False)
+            skip_feat = self.skip_conv2(skip_feat)  # 32 -> 64 channels
+            out = out + skip_feat
 
-        out = F.relu(self.bn2(self.conv_transpose2(out)))  # (batch, 64, 4, 16, 16) when starting at 1
+        out = F.relu(out)
 
-        # Add skip connection from conv_input if available
-        if encoder_features is not None and len(encoder_features) >= 1:
-            skip_feat = encoder_features[0]  # conv_input: (batch, 64, T, 16, 16)
-            if skip_feat.shape == out.shape:
-                out = out + skip_feat
+        # Third transpose convolution (final output channels)
+        out = self.conv_transpose3(out)  # (batch, 2, 4, 16, 16)
+        out = self.bn3(out)
 
-        out = F.relu(self.bn3(self.conv_transpose3(out)))  # (batch, 64, 4, 16, 16)
+        # Add skip connection from ConvLSTM output if available
+        if encoder_features is not None and len(encoder_features) > 0:
+            skip_feat = encoder_features[0]  # conv_lstm_out: (batch, 64, T, 16, 16)
+            # Need to reduce channels from 64 to 2 for final skip
+            # Use average along channel dim as simple projection
+            if skip_feat.shape[1] != self.output_channels:
+                # Take first 2 channels or use 1x1 conv
+                skip_feat = skip_feat[:, : self.output_channels]  # (batch, 2, T, 16, 16)
+            # Match temporal dimension
+            skip_feat = F.interpolate(skip_feat, size=(out.shape[2], 16, 16), mode="trilinear", align_corners=False)
+            out = out + skip_feat
 
-        # If a specific target temporal length is requested (e.g., input T),
-        # adjust the temporal dimension with trilinear interpolation.
+        # No activation after final layer (logits for BCE loss)
+
+        # Adjust temporal dimension if needed
         if target_time_steps is not None and out.shape[2] != target_time_steps:
             out = F.interpolate(
                 out, size=(target_time_steps, out.shape[3], out.shape[4]), mode="trilinear", align_corners=False
             )
 
-        # Rearrange for ConvLSTM: (batch, time, channels, height, width)
-        lstm_input = out.permute(0, 2, 1, 3, 4)  # (batch, T, 64, 16, 16)
-
-        # ConvLSTM processing
-        lstm_out = self.convlstm(lstm_input)  # (batch, T, 2, 16, 16)
-
-        # Apply final convolution to each time step (logits output; no sigmoid here)
-        outputs = []
-        for t in range(lstm_out.size(1)):
-            frame_out = self.final_conv(lstm_out[:, t])
-            outputs.append(frame_out.unsqueeze(1))
-
-        output = torch.cat(outputs, dim=1)  # (batch, T, 2, 16, 16)
-
         # Rearrange to match input format: (batch, T, 16, 16, 2)
-        output = output.permute(0, 1, 3, 4, 2)
+        output = out.permute(0, 2, 3, 4, 1)  # (batch, T, 16, 16, 2)
 
         return output
 
