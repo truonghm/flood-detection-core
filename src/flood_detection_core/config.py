@@ -222,6 +222,7 @@ class CLVAESiteSpecificConfig(BaseModel):
     # Loss weights from paper
     alpha: float = 0.1
     beta: float = 0.7
+    max_patches_per_pair: int = 128
 
 
 class CLVAEInferenceConfig(BaseModel):

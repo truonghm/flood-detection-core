@@ -27,9 +27,9 @@ site_specific:
   scheduler_min_lr: 0.000001
   batch_size: 32
   early_stopping_patience: 8
-  # Loss weights (from paper Equation 1)
-  alpha: 0.0  # KL divergence weight (set to 0 to break latent collapse)
-  beta: 0.4  # Reconstruction loss weight (gives 0.6 weight to contrastive)
+  alpha: 0.0
+  beta: 0.4
+  max_patches_per_pair: 128
 
 inference:
   num_temporal_length: 4

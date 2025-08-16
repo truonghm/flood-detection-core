@@ -99,6 +99,7 @@ def site_specific_train(
         # Loss weights from paper
         alpha=kwargs.get("alpha", model_config.site_specific.alpha),
         beta=kwargs.get("beta", model_config.site_specific.beta),
+        max_patches_per_pair=kwargs.get("max_patches_per_pair", model_config.site_specific.max_patches_per_pair),
     )
 
     if wandb_run:
@@ -148,7 +149,7 @@ def site_specific_train(
         augmentation_config=model_config.augmentation,
         use_contrastive_pairing_rules=True,
         positive_pair_ratio=0.5,
-        max_patches_per_pair=128,  # Reduced for faster iteration during testing
+        max_patches_per_pair=config["max_patches_per_pair"],
         vv_clipped_range=config["vv_clipped_range"],
         vh_clipped_range=config["vh_clipped_range"],
     )
