@@ -30,7 +30,7 @@ site_specific:
   alpha: 0.0  # No KL to prevent latent collapse
   beta: 0.4  # Lower reconstruction to emphasize contrastive and diversity
   max_patches_per_pair: all
-  positive_pair_ratio: 0.3  # More negative pairs for better separation
+  positive_pair_ratio: 0.5  # More negative pairs for better separation
 
 inference:
   num_temporal_length: 4
