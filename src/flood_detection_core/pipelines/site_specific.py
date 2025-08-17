@@ -100,6 +100,7 @@ def site_specific_train(
         alpha=kwargs.get("alpha", model_config.site_specific.alpha),
         beta=kwargs.get("beta", model_config.site_specific.beta),
         max_patches_per_pair=kwargs.get("max_patches_per_pair", model_config.site_specific.max_patches_per_pair),
+        positive_pair_ratio=kwargs.get("positive_pair_ratio", model_config.site_specific.positive_pair_ratio),
     )
 
     if wandb_run:
@@ -148,7 +149,7 @@ def site_specific_train(
         patch_size=config["patch_size"],
         augmentation_config=model_config.augmentation,
         use_contrastive_pairing_rules=True,
-        positive_pair_ratio=0.5,
+        positive_pair_ratio=config["positive_pair_ratio"],
         max_patches_per_pair=config["max_patches_per_pair"],
         vv_clipped_range=config["vv_clipped_range"],
         vh_clipped_range=config["vh_clipped_range"],

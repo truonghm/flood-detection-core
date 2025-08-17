@@ -223,6 +223,7 @@ class CLVAESiteSpecificConfig(BaseModel):
     alpha: float = 0.1
     beta: float = 0.7
     max_patches_per_pair: int | Literal["all"] | None = "all"
+    positive_pair_ratio: float = 0.5  # Ratio of positive pairs in contrastive learning
 
 
 class CLVAEInferenceConfig(BaseModel):
