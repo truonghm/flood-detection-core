@@ -169,12 +169,12 @@ def pretrain(
 
         if epoch % 10 == 0:
             print(f"Epoch {epoch}, Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}")
-            if wandb_run:
-                wandb_run.log({"train_loss": train_loss, "val_loss": val_loss})
-            with open(model_dir / "loss_log.csv", "a") as f:
-                if f.tell() == 0:
-                    f.write("epoch,train_loss,val_loss\n")
-                f.write(f"{epoch},{train_loss},{val_loss}\n")
+        if wandb_run:
+            wandb_run.log({"train_loss": train_loss, "val_loss": val_loss})
+        with open(model_dir / "loss_log.csv", "a") as f:
+            if f.tell() == 0:
+                f.write("epoch,train_loss,val_loss\n")
+            f.write(f"{epoch},{train_loss},{val_loss}\n")
 
         if patience_counter >= patience:
             print(f"Early stopping at epoch {epoch}")
