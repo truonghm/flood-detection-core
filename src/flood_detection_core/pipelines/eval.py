@@ -11,7 +11,7 @@ from flood_detection_core.config import DataConfig
 from flood_detection_core.data.processing.split import get_flood_event_tile_pairs
 
 
-def load_ground_truths(site: str, data_config: DataConfig) -> dict[str, np.ndarray]:
+def load_ground_truths(site: str, data_config: DataConfig, filter_threshold: float = 0.35) -> dict[str, np.ndarray]:
     tile_pairs = get_flood_event_tile_pairs(
         dataset_type="test",
         pre_flood_split_csv_path=data_config.splits.pre_flood_split,
@@ -26,7 +26,10 @@ def load_ground_truths(site: str, data_config: DataConfig) -> dict[str, np.ndarr
         gt_path = tile_pair["ground_truth_path"]
         with rasterio.open(gt_path) as src:
             gt = src.read(1)
-            gt = (gt > 0).astype(np.uint8)
+            # filter out images with >= filter_threshold of -1 -> too much missing data
+            if np.sum(gt == -1) / gt.size >= filter_threshold:
+                continue
+            # gt = (gt > 0).astype(np.uint8)
             ground_truths[tile_id] = gt
 
     return ground_truths

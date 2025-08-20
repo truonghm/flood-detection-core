@@ -163,8 +163,8 @@ def train(
     data_config_path: Annotated[str, typer.Option("--data-config-path")] = default_data_config_path,
     model_config_path: Annotated[str, typer.Option("--model-config-path")] = default_model_config_path,
     use_wandb: Annotated[bool, typer.Option("--wandb/--no-wandb")] = True,
-    pretrain_extra_tags: Annotated[list[str], typer.Option("--pretrain-extra-tags")] = [],
-    site_specific_extra_tags: Annotated[list[str], typer.Option("--site-specific-extra-tags")] = [],
+    extra_tags: Annotated[list[str], typer.Option("--extra-tags")] = [],
+    notes: Annotated[str | None, typer.Option("--notes")] = None,
 ) -> None:
     from flood_detection_core.config import CLVAEConfig, DataConfig
     from flood_detection_core.pipelines import TrainingInput, TrainingManager
@@ -176,9 +176,9 @@ def train(
         "pretrain": {"mode": "fresh", "path": None},
         "site_specific": [
             {"site": "bolivia", "mode": "fresh", "path": None},
-            # {"site": "mekong", "mode": "fresh", "path": None},
-            # {"site": "somalia", "mode": "fresh", "path": None},
-            # {"site": "spain", "mode": "fresh", "path": None},
+            {"site": "mekong", "mode": "fresh", "path": None},
+            {"site": "somalia", "mode": "fresh", "path": None},
+            {"site": "spain", "mode": "fresh", "path": None},
         ],
     }
     training_input = TrainingInput(**training_input_raw)
@@ -188,8 +188,8 @@ def train(
     training_manager.run(
         training_input,
         use_wandb=use_wandb,
-        pretrain_extra_tags=pretrain_extra_tags,
-        site_specific_extra_tags=site_specific_extra_tags,
+        extra_tags=extra_tags,
+        notes=notes,
     )
 
 

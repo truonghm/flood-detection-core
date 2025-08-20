@@ -68,16 +68,17 @@ class SiteSpecificTrainingDataset(Dataset):
         # Seed for deterministic sampling if provided
         self._base_seed = base_seed if base_seed is not None else random.randint(0, 2**31 - 1)
 
-        # Small in-memory LRU cache to minimize IO; stores normalized arrays per image path
-        self._image_cache: OrderedDict[Path, np.ndarray] = OrderedDict()
-        self._image_cache_capacity: int = 128
-
         # Build mapping: site -> tile -> list[pre_flood_paths]
         self.site_tile_to_paths = self._load_pre_flood_split_csv(self.pre_flood_split_csv_path, set(self.sites))
 
         # Pre-compute ALL individual patch locations (not pairs)
         self.patch_locations: list[tuple[str, str, int, int]] = []  # (site, tile, i, j)
         self._precompute_patch_coordinates()
+
+        self._image_cache: OrderedDict[Path, np.ndarray] = OrderedDict()
+        total_tiles = sum(len(tiles) for tiles in self.site_tile_to_paths.values())
+        estimated_unique_images = total_tiles * 8
+        self._image_cache_capacity: int = min(2000, max(500, estimated_unique_images))
 
     def _precompute_patch_coordinates(self) -> None:
         """Pre-compute all individual patch locations (not pairs)."""
@@ -202,10 +203,12 @@ class SiteSpecificTrainingDataset(Dataset):
         ]
         temporal_patch1 = np.stack([np.ascontiguousarray(p) for p in patches1], axis=0)
 
-        # Get a different patch (ensure it's not the same location)
-        other_idx = random.randint(0, len(self.patch_locations) - 1)
+        window_size = min(2000, len(self.patch_locations) // 5)
+        window_start = max(0, idx - window_size // 2)
+        window_end = min(len(self.patch_locations), idx + window_size // 2)
+        other_idx = random.randint(window_start, window_end - 1)
         while other_idx == idx:
-            other_idx = random.randint(0, len(self.patch_locations) - 1)
+            other_idx = random.randint(window_start, window_end - 1)
 
         site2, tile2, i2, j2 = self.patch_locations[other_idx]
         seq_paths2 = self._pick_sequence_paths(site2, tile2)

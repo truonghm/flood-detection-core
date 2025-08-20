@@ -135,10 +135,8 @@ class TrainingManager:
         self,
         training_input: TrainingInput,
         use_wandb: bool = False,
-        pretrain_extra_tags: list[str] | None = None,
-        site_specific_extra_tags: list[str] | None = None,
-        eval_extra_tags: list[str] | None = None,
-        inference_extra_tags: list[str] | None = None,
+        extra_tags: list[str] | None = None,
+        notes: str | None = None,
     ):
         """
         How to set up TrainingInput:
@@ -195,7 +193,8 @@ class TrainingManager:
                     name=pretrain_run_name,
                     group=self.wandb_group,
                     job_type="pre-training",
-                    tags=self.wandb_tags + (pretrain_extra_tags or []),
+                    tags=self.wandb_tags + (extra_tags or []),
+                    notes=notes,
                 ) as run:
                     _, model_info_path = self.pretrain(
                         run_name=pretrain_run_name,
@@ -245,7 +244,8 @@ class TrainingManager:
                     name=site_specific_run_name,
                     group=self.wandb_group,
                     job_type="training",
-                    tags=self.wandb_tags + (site_specific_extra_tags or []) + [site_name],
+                    tags=self.wandb_tags + (extra_tags or []) + [site_name],
+                    notes=notes,
                 ) as run:
                     self.site_specific(site=site_name, run_name=site_specific_run_name, wandb_run=run, **kwargs)
             else:
@@ -265,7 +265,8 @@ class TrainingManager:
                     name=f"predict_{site_name}_{self._get_current_datetime()}",
                     group=self.wandb_group,
                     job_type="predict",
-                    tags=self.wandb_tags + (inference_extra_tags or []) + [site_name],
+                    tags=self.wandb_tags + (extra_tags or []) + [site_name],
+                    notes=notes,
                 ) as run:
                     distance_maps = self.predict(site=site_name, wandb_run=run, model_path=model_path)
             else:
@@ -304,7 +305,8 @@ class TrainingManager:
                     name=f"eval_{site_name}_{self._get_current_datetime()}",
                     group=self.wandb_group,
                     job_type="eval",
-                    tags=self.wandb_tags + (eval_extra_tags or []) + [site_name],
+                    tags=self.wandb_tags + (extra_tags or []) + [site_name],
+                    notes=notes,
                 ) as run:
                     th_test_df_wandb = wandb.Table(dataframe=th_test_df)
                     run.log(
