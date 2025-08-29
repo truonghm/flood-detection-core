@@ -4,7 +4,6 @@ from typing import Literal
 import numpy as np
 import rasterio
 import torch
-from skimage.exposure import match_histograms
 from torch.utils.data import Dataset
 
 from flood_detection_core.config import CLVAEConfig, DataConfig
@@ -215,11 +214,11 @@ class FloodDetectionDataset(Dataset):
         # Read and crop post-flood image WITH normalization
         post_arr = _read_tif_hw2(Path(tp["post_flood_path"]))
         post_arr = post_arr[:min_h, :min_w, :]
-        post_arr = match_histograms(pre_imgs[0], post_arr)
 
         # only normalize post-flood image because pre-flood images are already normalized in download
         if self.post_flood_vv_clipped_range and self.post_flood_vh_clipped_range:
             post_arr = _normalize(post_arr, self.post_flood_vv_clipped_range, self.post_flood_vh_clipped_range)
+        # post_arr = match_histograms(pre_imgs[0], post_arr)
         post_stack = post_arr[None, ...]  # (1, H, W, 2)
 
         # Reflect pad both sequences

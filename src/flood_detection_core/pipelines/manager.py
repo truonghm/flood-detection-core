@@ -278,7 +278,7 @@ class TrainingManager:
             else:
                 distance_maps = self.predict(site=site_name, wandb_run=None, model_path=model_path)
             ground_truths = load_ground_truths(site=site_name, data_config=self.data_config)
-
+            distance_maps = {k: v for k, v in distance_maps.items() if k in ground_truths}
             th_test_df = test_thresholds(
                 thresholds=[
                     0.001,

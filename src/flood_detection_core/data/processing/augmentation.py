@@ -15,10 +15,10 @@ def augment_data(
     data: np.ndarray,
     augmentation_config: AugmentationConfig | None = None,
     normalize: bool = False,
+    apply_geometric: bool = True,
+    apply_non_geometric: bool = True,
 ) -> np.ndarray:
-    """
-    Data augmentation for SAR time series patches.
-    Input data is assumed to be normalized to [0, 1] already.
+    """Data augmentation for SAR time series patches. Input data is assumed to be normalized to [0, 1] already.
 
     Augmentation specs:
     - Geometric: Flips (left-right p=0.5, up-down p=0.2), rotation (-90° to 90°)
@@ -34,8 +34,6 @@ def augment_data(
     Returns
     -------
         Augmented data with same shape as input
-
-
     """
     augmented_data = data.copy()
     if not augmentation_config:
@@ -62,42 +60,44 @@ def augment_data(
     gamma_contrast_range = augmentation_config.non_geometric.gamma_contrast
 
     # geometric
-    # left-right flip
-    if np.random.random() < lr_prob:
-        augmented_data = np.flip(augmented_data, axis=2).copy()
+    if apply_geometric:
+        # left-right flip
+        if np.random.random() < lr_prob:
+            augmented_data = np.flip(augmented_data, axis=2).copy()
 
-    # up-down flip
-    if np.random.random() < ud_prob:
-        augmented_data = np.flip(augmented_data, axis=1).copy()
+        # up-down flip
+        if np.random.random() < ud_prob:
+            augmented_data = np.flip(augmented_data, axis=1).copy()
 
-    # random rotate between -90° and 90°
-    angle = np.random.uniform(rotate_range[0], rotate_range[1])
-    for t in range(augmented_data.shape[0]):
-        for c in range(augmented_data.shape[3]):
-            augmented_data[t, :, :, c] = ndimage.rotate(
-                augmented_data[t, :, :, c], angle, reshape=False, mode="reflect"
-            )
-
-    # non-geometric
-    # gaussian blur
-    if np.random.random() < gaussian_blur_prob:
-        sigma = np.random.uniform(0.5, 1.0)
+        # random rotate between -90° and 90°
+        angle = np.random.uniform(rotate_range[0], rotate_range[1])
         for t in range(augmented_data.shape[0]):
             for c in range(augmented_data.shape[3]):
-                augmented_data[t, :, :, c] = ndimage.gaussian_filter(augmented_data[t, :, :, c], sigma=sigma)
+                augmented_data[t, :, :, c] = ndimage.rotate(
+                    augmented_data[t, :, :, c], angle, reshape=False, mode="reflect"
+                )
 
-    # gamma contrast
-    if np.random.random() < gamma_contrast_prob:
-        gamma = np.random.uniform(gamma_contrast_range[0], gamma_contrast_range[1])
+    # non-geometric
+    if apply_non_geometric:
+        # gaussian blur
+        if np.random.random() < gaussian_blur_prob:
+            sigma = np.random.uniform(0.5, 1.0)
+            for t in range(augmented_data.shape[0]):
+                for c in range(augmented_data.shape[3]):
+                    augmented_data[t, :, :, c] = ndimage.gaussian_filter(augmented_data[t, :, :, c], sigma=sigma)
 
-        if normalize:
-            data_min = augmented_data.min()
-            data_max = augmented_data.max()
-            normalized_data = (augmented_data - data_min) / (data_max - data_min + 1e-8)
-            gamma_corrected = np.power(normalized_data, gamma)
-            augmented_data = gamma_corrected * (data_max - data_min) + data_min
-        else:
-            augmented_data = np.power(np.clip(augmented_data, 0, 1), gamma)
+        # gamma contrast
+        if np.random.random() < gamma_contrast_prob:
+            gamma = np.random.uniform(gamma_contrast_range[0], gamma_contrast_range[1])
+
+            if normalize:
+                data_min = augmented_data.min()
+                data_max = augmented_data.max()
+                normalized_data = (augmented_data - data_min) / (data_max - data_min + 1e-8)
+                gamma_corrected = np.power(normalized_data, gamma)
+                augmented_data = gamma_corrected * (data_max - data_min) + data_min
+            else:
+                augmented_data = np.power(np.clip(augmented_data, 0, 1), gamma)
 
     return augmented_data
 
@@ -116,9 +116,8 @@ def augment_data_torch(
     augmentation_config: AugmentationConfig | None = None,
     normalize: bool = False,
 ) -> torch.Tensor:
-    """
-    Data augmentation for SAR time series patches using PyTorch tensors.
-    Input data is assumed to be normalized to [0, 1] already.
+    """Data augmentation for SAR time series patches using PyTorch tensors. Input data is assumed to be normalized
+    to [0, 1] already.
 
     Augmentation specs:
     - Geometric: Flips (left-right p=0.5, up-down p=0.2), rotation (-90° to 90°)
@@ -135,7 +134,6 @@ def augment_data_torch(
     Returns
     -------
         Augmented data with same shape as input (torch.Tensor)
-
     """
     augmented_data = data.clone()
     if not augmentation_config:

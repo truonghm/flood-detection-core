@@ -27,9 +27,9 @@ site_specific:
   scheduler_patience: 3
   scheduler_factor: 0.1
   scheduler_min_lr: 0.000001
-  batch_size: 32
+  batch_size: 64
   early_stopping_patience: 8
-  alpha: 0.01
+  alpha: 0.1
   beta: 0.7
   max_patches_per_pair: all
   positive_pair_ratio: 0.5

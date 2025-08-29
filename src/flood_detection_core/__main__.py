@@ -254,7 +254,8 @@ def run_all(
     model_config = CLVAEConfig.from_yaml(model_config_path)
 
     if dataset == "sen1flood11":
-        sites = HandLabeledSen1Flood11Sites
+        # sites = HandLabeledSen1Flood11Sites
+        sites = ["somalia"]
     elif dataset == "urban_sar":
         # sites = UrbanSARSites
         sites = ["Houston"]

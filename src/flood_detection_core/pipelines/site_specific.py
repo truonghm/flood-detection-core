@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 import torch
+import torch.nn.functional as F
 from rich import print
 from rich.progress import Progress
 from torch.utils.data import DataLoader
@@ -142,8 +143,9 @@ def site_specific_train(
         state_dict = torch.load(pretrained_path, map_location=device)
         model.load_state_dict(state_dict["model_state"])
 
-    dataset = SiteSpecificTrainingDataset(
+    train_dataset = SiteSpecificTrainingDataset(
         pre_flood_split_csv_path=data_config.csv_files.pre_flood_split,
+        dataset_type="train",
         sites=[site_name],
         num_temporal_length=config["num_temporal_length"],
         patch_size=config["patch_size"],
@@ -154,7 +156,20 @@ def site_specific_train(
         vv_clipped_range=config["vv_clipped_range"],
         vh_clipped_range=config["vh_clipped_range"],
     )
-    train_dataset, val_dataset = torch.utils.data.random_split(dataset, [0.8, 0.2])
+    val_dataset = SiteSpecificTrainingDataset(
+        pre_flood_split_csv_path=data_config.csv_files.pre_flood_split,
+        dataset_type="val",
+        sites=[site_name],
+        num_temporal_length=config["num_temporal_length"],
+        patch_size=config["patch_size"],
+        # augmentation_config=model_config.augmentation,
+        use_contrastive_pairing_rules=True,
+        positive_pair_ratio=config["positive_pair_ratio"],
+        max_patches_per_pair=config["max_patches_per_pair"],
+        vv_clipped_range=config["vv_clipped_range"],
+        vh_clipped_range=config["vh_clipped_range"],
+    )
+    # train_dataset, val_dataset = torch.utils.data.random_split(dataset, [0.8, 0.2])
     train_size = len(train_dataset)
     val_size = len(val_dataset)
     print(f"Site {site_name} - Train size: {train_size}, Val size: {val_size}")
@@ -212,22 +227,40 @@ def site_specific_train(
                 # Model now supports variable T; dataset provides sequences with
                 # config["num_temporal_length"], so no trimming is needed.
 
-                # Forward both streams
-                x1_recon, mu1, logvar1, z1 = model(seq_a)
-                x2_recon, mu2, logvar2, z2 = model(seq_b)
+                # Forward both streams with skip-detach to mitigate collapse
+                x1_recon, mu1, logvar1, z1 = model(seq_a, use_skip_connections=True, detach_skips=True)
+                x2_recon, mu2, logvar2, z2 = model(seq_b, use_skip_connections=True, detach_skips=True)
 
-                # Compute combined loss with contrastive on latent representations
-                combined_loss = model.compute_loss(
-                    x=seq_a, reconstruction=x1_recon, mu=mu1, logvar=logvar1, z=z1, contrastive_z=z2
-                )
-
-                # Add the second stream's reconstruction and KL losses (symmetric treatment)
+                # Reconstruction and KL for both streams (no internal contrastive)
+                comp1 = model.compute_loss(seq_a, x1_recon, mu1, logvar1, z=None, contrastive_z=None)
                 comp2 = model.compute_loss(seq_b, x2_recon, mu2, logvar2, z=None, contrastive_z=None)
 
-                # Combine both streams symmetrically as in paper Eq. (1)
-                recon_loss = 0.5 * (combined_loss["reconstruction_loss"] + comp2["reconstruction_loss"])
-                kl_loss = 0.5 * (combined_loss["kl_loss"] + comp2["kl_loss"])
-                contrastive_loss = combined_loss["contrastive_loss"]  # Computed on latent representations
+                recon_loss = 0.5 * (comp1["reconstruction_loss"] + comp2["reconstruction_loss"])
+                kl_loss = 0.5 * (comp1["kl_loss"] + comp2["kl_loss"])
+
+                # Label-aware contrastive on reconstructions (self-supervised pairs)
+                contrastive_loss = torch.tensor(0.0, device=seq_a.device)
+                if isinstance(batch, list | tuple) and len(batch) == 3:
+                    _, _, y = batch
+                    y = y.to(seq_a.device)
+                    e1 = torch.sigmoid(x1_recon).reshape(x1_recon.size(0), -1)
+                    e2 = torch.sigmoid(x2_recon).reshape(x2_recon.size(0), -1)
+                    e1 = F.normalize(e1, dim=1)
+                    e2 = F.normalize(e2, dim=1)
+                    cos = torch.sum(e1 * e2, dim=1)
+
+                    margin = 0.3
+                    pos = y == 1
+                    neg = y == 0
+                    if pos.any():
+                        pos_loss = (1.0 - cos[pos]).mean()
+                    else:
+                        pos_loss = torch.tensor(0.0, device=seq_a.device)
+                    if neg.any():
+                        neg_loss = F.relu(cos[neg] - margin).mean()
+                    else:
+                        neg_loss = torch.tensor(0.0, device=seq_a.device)
+                    contrastive_loss = pos_loss + neg_loss
 
                 contrastive_weight = 1 - model.alpha - model.beta
                 loss = model.alpha * kl_loss + model.beta * recon_loss + contrastive_weight * contrastive_loss

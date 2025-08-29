@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Literal
 
 from rich import print
+from sklearn.model_selection import train_test_split
 
 from flood_detection_core.config import DataConfig
 from flood_detection_core.data.constants import BOLIVIA_ALLOWED_TILES, HandLabeledSen1Flood11Sites
@@ -30,19 +31,24 @@ def split_data(
         n_tiles = len(tiles)
 
         train_val_tiles = test_tiles = pretrain_tiles = tiles
+        train_tiles, val_tiles = train_test_split(train_val_tiles, test_size=0.2, random_state=42)
 
         print(f"Site: {site}")
         print(
-            "train+val:",
-            len(train_val_tiles),
+            "train:",
+            len(train_tiles),
+            "val:",
+            len(val_tiles),
             "test:",
             len(test_tiles),
             "pretrain:",
             len(pretrain_tiles),
         )
         print(
-            "train+val:",
-            f"{len(train_val_tiles) / n_tiles:.2f}",
+            "train:",
+            f"{len(train_tiles) / n_tiles:.2f}",
+            "val:",
+            f"{len(val_tiles) / n_tiles:.2f}",
             "test:",
             f"{len(test_tiles) / n_tiles:.2f}",
             "pretrain:",
@@ -50,7 +56,8 @@ def split_data(
         )
 
         site_tiles_mapping[site] = {
-            "train_val": train_val_tiles,
+            "train": train_tiles,
+            "val": val_tiles,
             "test": test_tiles,
             "pretrain": pretrain_tiles,
         }
@@ -58,8 +65,6 @@ def split_data(
 
     pre_flood_split = []
     post_flood_split = []
-
-    data_root = Path(".").absolute()
 
     for site, data_tiles_mapping in site_tiles_mapping.items():
         for dataset_type, tiles in data_tiles_mapping.items():
@@ -73,7 +78,7 @@ def split_data(
                             "dataset_type": dataset_type,
                             "site": site,
                             "tile": tile,
-                            "path": path.relative_to(data_root).as_posix(),
+                            "path": path.as_posix(),
                         }
                     )
                 for pf_path, gt_path in zip(post_flood_paths, ground_truth_paths):
@@ -82,8 +87,8 @@ def split_data(
                             "dataset_type": dataset_type,
                             "site": site,
                             "tile": tile,
-                            "post_flood": pf_path.relative_to(data_root).as_posix(),
-                            "ground_truth": gt_path.relative_to(data_root).as_posix(),
+                            "post_flood": pf_path.as_posix(),
+                            "ground_truth": gt_path.as_posix(),
                         }
                     )
 
@@ -106,7 +111,7 @@ def split_data(
 
 
 def get_flood_event_tile_pairs(
-    dataset_type: Literal["train_val", "test", "pretrain"],
+    dataset_type: Literal["train", "val", "test", "pretrain"],
     pre_flood_split_csv_path: Path,
     post_flood_split_csv_path: Path,
 ) -> list[dict]:

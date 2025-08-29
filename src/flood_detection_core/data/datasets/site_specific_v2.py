@@ -37,6 +37,7 @@ class SiteSpecificTrainingDataset(Dataset):
     def __init__(
         self,
         pre_flood_split_csv_path: Path,
+        dataset_type: Literal["train", "val"],
         sites: list[str],
         # Core parameters
         num_temporal_length: int = 4,
@@ -56,6 +57,7 @@ class SiteSpecificTrainingDataset(Dataset):
         super().__init__()
 
         self.pre_flood_split_csv_path = Path(pre_flood_split_csv_path)
+        self.dataset_type = dataset_type
         self.sites = sites
         self.num_temporal_length = num_temporal_length
         self.patch_size = patch_size
@@ -70,11 +72,18 @@ class SiteSpecificTrainingDataset(Dataset):
         self._base_seed = base_seed if base_seed is not None else random.randint(0, 2**31 - 1)
 
         # Build mapping: site -> tile -> list[pre_flood_paths]
-        self.site_tile_to_paths = self._load_pre_flood_split_csv(self.pre_flood_split_csv_path, set(self.sites))
+        self.site_tile_to_paths = self._load_pre_flood_split_csv(
+            self.pre_flood_split_csv_path, set(self.sites), self.dataset_type
+        )
 
         # Pre-compute ALL individual patch locations (not pairs)
         self.patch_locations: list[tuple[str, str, int, int]] = []  # (site, tile, i, j)
         self._precompute_patch_coordinates()
+
+        # Precompute deterministic negatives for validation to stabilize metrics
+        self._fixed_negative_for_val: list[int] | None = None
+        if self.dataset_type == "val":
+            self._fixed_negative_for_val = self._build_fixed_negatives()
 
         self._image_cache: OrderedDict[Path, np.ndarray] = OrderedDict()
         total_tiles = sum(len(tiles) for tiles in self.site_tile_to_paths.values())
@@ -117,12 +126,13 @@ class SiteSpecificTrainingDataset(Dataset):
     def _load_pre_flood_split_csv(
         split_csv_path: Path,
         sites_filter: set[str],
+        dataset_type: Literal["train", "val"],
     ) -> dict[str, dict[str, list[str]]]:
         mapping: dict[str, dict[str, list[str]]] = {}
         with open(split_csv_path) as f:
             reader = csv.DictReader(f)
             for row in reader:
-                if row.get("dataset_type") != "train_val":
+                if row.get("dataset_type") != dataset_type:
                     continue
                 site = row.get("site", "")
                 tile = row.get("tile", "")
@@ -173,8 +183,21 @@ class SiteSpecificTrainingDataset(Dataset):
 
         # Apply two different random augmentations to the SAME patch
         if self.augmentation_config is not None:
-            seq_a = augment_data(temporal_patch.copy(), self.augmentation_config, normalize=False)
-            seq_b = augment_data(temporal_patch.copy(), self.augmentation_config, normalize=False)
+            # Positives: non-geometric only (no spatial transforms)
+            seq_a = augment_data(
+                temporal_patch.copy(),
+                self.augmentation_config,
+                normalize=False,
+                apply_geometric=False,
+                apply_non_geometric=True,
+            )
+            seq_b = augment_data(
+                temporal_patch.copy(),
+                self.augmentation_config,
+                normalize=False,
+                apply_geometric=False,
+                apply_non_geometric=True,
+            )
         else:
             seq_a = temporal_patch.copy()
             seq_b = temporal_patch.copy()
@@ -204,14 +227,41 @@ class SiteSpecificTrainingDataset(Dataset):
         ]
         temporal_patch1 = np.stack([np.ascontiguousarray(p) for p in patches1], axis=0)
 
-        window_size = min(2000, len(self.patch_locations) // 5)
-        window_start = max(0, idx - window_size // 2)
-        window_end = min(len(self.patch_locations), idx + window_size // 2)
-        other_idx = random.randint(window_start, window_end - 1)
-        while other_idx == idx:
+        # Choose negative index
+        if self.dataset_type == "val" and self._fixed_negative_for_val is not None:
+            other_idx = self._fixed_negative_for_val[idx]
+        else:
+            window_size = min(2000, len(self.patch_locations) // 5)
+            window_start = max(0, idx - window_size // 2)
+            window_end = min(len(self.patch_locations), idx + window_size // 2)
             other_idx = random.randint(window_start, window_end - 1)
+            while other_idx == idx:
+                other_idx = random.randint(window_start, window_end - 1)
 
         site2, tile2, i2, j2 = self.patch_locations[other_idx]
+
+        # Enforce cross-tile negatives: if same tile, resample/advance deterministically
+        if tile2 == tile1:
+            if self.dataset_type == "val" and self._fixed_negative_for_val is not None:
+                # advance until different tile
+                N = len(self.patch_locations)
+                j = (other_idx + 1) % N
+                while j != idx:
+                    _, t2, _, _ = self.patch_locations[j]
+                    if t2 != tile1:
+                        other_idx = j
+                        site2, tile2, i2, j2 = self.patch_locations[other_idx]
+                        break
+                    j = (j + 1) % N
+            else:
+                # training: resample within window until tile differs (with safety cap)
+                attempts = 0
+                while tile2 == tile1 and attempts < 20:
+                    other_idx = random.randint(window_start, window_end - 1)
+                    if other_idx == idx:
+                        continue
+                    site2, tile2, i2, j2 = self.patch_locations[other_idx]
+                    attempts += 1
         seq_paths2 = self._pick_sequence_paths(site2, tile2)
 
         patches2 = [
@@ -221,13 +271,48 @@ class SiteSpecificTrainingDataset(Dataset):
 
         # Apply augmentations independently
         if self.augmentation_config is not None:
-            seq_a = augment_data(temporal_patch1, self.augmentation_config, normalize=False)
-            seq_b = augment_data(temporal_patch2, self.augmentation_config, normalize=False)
+            # Negatives: geometric + non-geometric
+            seq_a = augment_data(
+                temporal_patch1,
+                self.augmentation_config,
+                normalize=False,
+                apply_geometric=True,
+                apply_non_geometric=True,
+            )
+            seq_b = augment_data(
+                temporal_patch2,
+                self.augmentation_config,
+                normalize=False,
+                apply_geometric=True,
+                apply_non_geometric=True,
+            )
         else:
             seq_a = temporal_patch1
             seq_b = temporal_patch2
 
         return seq_a, seq_b
+
+    def _build_fixed_negatives(self) -> list[int]:
+        """Build a deterministic mapping idx -> other_idx for validation negatives.
+
+        Uses a fixed offset and advances until a different tile is found.
+        """
+        N = len(self.patch_locations)
+        if N == 0:
+            return []
+        offset = max(1, N // 3)
+        mapping: list[int] = [0] * N
+        for idx in range(N):
+            site1, tile1, _, _ = self.patch_locations[idx]
+            j = (idx + offset) % N
+            _, tile2, _, _ = self.patch_locations[j]
+            while tile2 == tile1:
+                j = (j + 1) % N
+                if j == idx:
+                    break
+                _, tile2, _, _ = self.patch_locations[j]
+            mapping[idx] = j
+        return mapping
 
     def _get_image_array(self, img_path: Path) -> np.ndarray:
         if not isinstance(img_path, Path):
@@ -320,6 +405,7 @@ if __name__ == "__main__":
 
     dataset = SiteSpecificTrainingDataset(
         pre_flood_split_csv_path=data_config.csv_files.pre_flood_split,
+        dataset_type="train",
         sites=["Houston"],
         num_temporal_length=clvae_config.site_specific.num_temporal_length,
         patch_size=clvae_config.site_specific.patch_size,

@@ -255,6 +255,7 @@ class ConvLSTMDecoder(nn.Module):
         z: torch.Tensor,
         encoder_features: list[torch.Tensor] | None = None,
         target_time_steps: int | None = None,
+        detach_skips: bool = False,
     ) -> torch.Tensor:
         """Forward pass for decoder with skip connections.
 
@@ -288,6 +289,8 @@ class ConvLSTMDecoder(nn.Module):
 
         if encoder_features is not None and len(encoder_features) > 2:
             skip_feat = encoder_features[2]
+            if detach_skips:
+                skip_feat = skip_feat.detach()
             skip_feat = F.interpolate(skip_feat, size=(out.shape[2], 8, 8), mode="trilinear", align_corners=False)
             out = torch.cat([out, skip_feat], dim=1)
             out = self.merge_conv1(out)
@@ -299,6 +302,8 @@ class ConvLSTMDecoder(nn.Module):
 
         if encoder_features is not None and len(encoder_features) > 1:
             skip_feat = encoder_features[1]
+            if detach_skips:
+                skip_feat = skip_feat.detach()
             skip_feat = F.interpolate(skip_feat, size=(out.shape[2], 16, 16), mode="trilinear", align_corners=False)
             out = torch.cat([out, skip_feat], dim=1)
             out = self.merge_conv2(out)
@@ -309,6 +314,8 @@ class ConvLSTMDecoder(nn.Module):
 
         if encoder_features is not None and len(encoder_features) > 0:
             skip_feat = encoder_features[0]
+            if detach_skips:
+                skip_feat = skip_feat.detach()
             skip_feat = F.interpolate(skip_feat, size=(out.shape[2], 16, 16), mode="trilinear", align_corners=False)
             out = torch.cat([out, skip_feat], dim=1)
             out = self.merge_conv3(out)
@@ -370,7 +377,7 @@ class CLVAE(nn.Module):
         return mu + eps * std
 
     def forward(
-        self, x: torch.Tensor, use_skip_connections: bool = True
+        self, x: torch.Tensor, use_skip_connections: bool = True, detach_skips: bool = False
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """Forward pass for CLVAE with optional skip connections.
 
@@ -391,12 +398,14 @@ class CLVAE(nn.Module):
             z = self.reparameterize(mu, logvar)
             # Match decoder temporal length to input sequence length
             target_T = x.shape[1]
-            reconstruction = self.decoder(z, encoder_features, target_time_steps=target_T)
+            reconstruction = self.decoder(z, encoder_features, target_time_steps=target_T, detach_skips=detach_skips)
         else:
             mu, logvar = self.encoder(x, return_features=False)
             z = self.reparameterize(mu, logvar)
             target_T = x.shape[1]
-            reconstruction = self.decoder(z, target_time_steps=target_T)
+            reconstruction = self.decoder(
+                z, encoder_features=None, target_time_steps=target_T, detach_skips=detach_skips
+            )
 
         return reconstruction, mu, logvar, z
 
