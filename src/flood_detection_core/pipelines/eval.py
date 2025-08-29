@@ -26,6 +26,8 @@ def load_ground_truths(site: str, data_config: DataConfig, filter_threshold: flo
         gt_path = tile_pair["ground_truth_path"]
         with rasterio.open(gt_path) as src:
             gt = src.read(1)
+            # if value > 1, make it 1
+            gt = np.where(gt > 1, 1, gt)
             # filter out images with >= filter_threshold of -1 -> too much missing data
             if np.sum(gt == -1) / gt.size >= filter_threshold:
                 continue
