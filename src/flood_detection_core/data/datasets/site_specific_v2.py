@@ -11,6 +11,7 @@ from torch.utils.data import Dataset
 
 from flood_detection_core.config import AugmentationConfig, CLVAEConfig, DataConfig
 from flood_detection_core.data.processing.augmentation import augment_data
+from flood_detection_core.data.processing.imaging import resize_to_target
 from flood_detection_core.data.processing.utils import choose_pre_flood_paths
 from flood_detection_core.data.processing.utils import get_image_size_v2 as get_image_size
 
@@ -248,6 +249,7 @@ class SiteSpecificTrainingDataset(Dataset):
         else:
             raise ValueError(f"Invalid format: {img_path}")
 
+        data = resize_to_target(data)
         # Apply per-channel clipping/normalization if requested
         if self.vv_clipped_range is not None:
             vv_band = data[:, :, 0].copy()
@@ -313,12 +315,12 @@ class SiteSpecificTrainingDataset(Dataset):
 if __name__ == "__main__":
     from torch.utils.data import DataLoader
 
-    data_config = DataConfig.from_yaml(Path("./flood-detection-core/yamls/data.yaml"))
-    clvae_config = CLVAEConfig.from_yaml(Path("./flood-detection-core/yamls/model_clvae.yaml"))
+    data_config = DataConfig.from_yaml(Path("./flood-detection-core/yamls/data_urban_sar.yaml"))
+    clvae_config = CLVAEConfig.from_yaml(Path("./flood-detection-core/yamls/model_clvae_urban_sar.yaml"))
 
     dataset = SiteSpecificTrainingDataset(
-        pre_flood_split_csv_path=data_config.splits.pre_flood_split,
-        sites=["bolivia"],
+        pre_flood_split_csv_path=data_config.csv_files.pre_flood_split,
+        sites=["Houston"],
         num_temporal_length=clvae_config.site_specific.num_temporal_length,
         patch_size=clvae_config.site_specific.patch_size,
         max_patches_per_pair="all",  # Use all available patches

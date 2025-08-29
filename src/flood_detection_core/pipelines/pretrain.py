@@ -36,8 +36,8 @@ def pretrain(
     - Focuses on learning normal SAR patterns without flood conditions
     """
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    if not data_config.artifact.pretrain_dir.exists():
-        data_config.artifact.pretrain_dir.mkdir(parents=True, exist_ok=True)
+    if not data_config.artifacts_dirs.pretrain.exists():
+        data_config.artifacts_dirs.pretrain.mkdir(parents=True, exist_ok=True)
 
     config = dict(
         input_channels=kwargs.get("input_channels", model_config.pretrain.input_channels),
@@ -53,12 +53,14 @@ def pretrain(
         num_temporal_length=kwargs.get("num_temporal_length", model_config.pretrain.num_temporal_length),
         patch_size=kwargs.get("patch_size", model_config.pretrain.patch_size),
         early_stopping_patience=kwargs.get("early_stopping_patience", model_config.pretrain.early_stopping_patience),
+        vv_clipped_range=kwargs.get("vv_clipped_range", model_config.pretrain.vv_clipped_range),
+        vh_clipped_range=kwargs.get("vh_clipped_range", model_config.pretrain.vh_clipped_range),
     )
     if wandb_run:
         wandb_run.config.update(config)
 
     run_name = run_name or get_pretrain_run_name()
-    model_dir = data_config.artifact.pretrain_dir / run_name
+    model_dir = data_config.artifacts_dirs.pretrain / run_name
     model_dir.mkdir(parents=True, exist_ok=True)
     with open(model_dir / "config.json", "w") as f:
         json.dump(config, f)
@@ -77,11 +79,13 @@ def pretrain(
     )
 
     dataset = PretrainDataset(
-        split_csv_path=data_config.splits.pre_flood_split,
-        pretrain_dir=data_config.gee.pretrain_dir,
+        split_csv_path=data_config.csv_files.pre_flood_split,
+        pretrain_dir=data_config.data_dirs.pretrain_cache,
         num_patches=config["num_patches"],
         num_temporal_length=config["num_temporal_length"],
         patch_size=config["patch_size"],
+        vv_clipped_range=config["vv_clipped_range"],
+        vh_clipped_range=config["vh_clipped_range"],
         transform=lambda x: augment_data(x, model_config.augmentation, False),
     )
     train_size = int(0.8 * len(dataset))
@@ -183,7 +187,7 @@ def pretrain(
     print("Finish pre-training, best model info is saved at:")
     print(model_dir / "best_model_info.json")
 
-    with open(data_config.artifact.pretrain_dir / "latest_run.txt", "w") as f:
+    with open(data_config.artifacts_dirs.pretrain / "latest_run.txt", "w") as f:
         f.write(model_dir.name)
 
     if wandb_run:
@@ -201,14 +205,16 @@ def pretrain(
 
 
 if __name__ == "__main__":
-    data_config = DataConfig.from_yaml("./flood-detection-core/yamls/data.yaml")
+    data_config = DataConfig.from_yaml("./flood-detection-core/yamls/data_urban_sar.yaml")
     model_config = CLVAEConfig.from_yaml("./flood-detection-core/yamls/model_clvae.yaml")
 
     use_wandb = False
 
     # # set num_patches to 10 for testing
     if use_wandb:
-        with wandb.init(project="flood-detection-dl", name="clvae-pretrain", tags=["clvae", "test"]) as run:
+        with wandb.init(
+            project="flood-detection-dl", name="clvae-pretrain", tags=["clvae", "test", "urban_sar"]
+        ) as run:
             pretrain(data_config, model_config, wandb_run=run, num_patches=10)
     else:
-        pretrain(data_config, model_config, num_patches=10)
+        pretrain(data_config, model_config, num_patches=100)

@@ -14,8 +14,8 @@ from flood_detection_core.data.processing.split import get_flood_event_tile_pair
 def load_ground_truths(site: str, data_config: DataConfig, filter_threshold: float = 0.35) -> dict[str, np.ndarray]:
     tile_pairs = get_flood_event_tile_pairs(
         dataset_type="test",
-        pre_flood_split_csv_path=data_config.splits.pre_flood_split,
-        post_flood_split_csv_path=data_config.splits.post_flood_split,
+        pre_flood_split_csv_path=data_config.csv_files.pre_flood_split,
+        post_flood_split_csv_path=data_config.csv_files.post_flood_split,
     )
 
     tile_pairs_by_site = [pair for pair in tile_pairs if pair["site"] == site]

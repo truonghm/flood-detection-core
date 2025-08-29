@@ -10,6 +10,8 @@ class HandLabeledSen1Flood11Site(str, Enum):
 
 HandLabeledSen1Flood11Sites = [s.value for s in HandLabeledSen1Flood11Site]
 
+UrbanSARSites = ["Houston", "Iran", "Hebei_2"]
+
 
 class WeaklyLabeledSen1Flood11Site(str, Enum):
     BOLIVIA = "bolivia"

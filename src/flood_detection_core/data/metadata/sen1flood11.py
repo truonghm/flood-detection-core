@@ -6,6 +6,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, field_validator
 from rich import print
 
+from .base import BasePerSiteTilesMetadata, SiteMetadata, TileMetadata
 from flood_detection_core.data.constants import (
     CatalogSubdirs,
     EquivalentNameMapping,
@@ -14,8 +15,7 @@ from flood_detection_core.data.constants import (
 
 
 def calculate_bbox_from_coordinates(coordinates: list[list[float]]) -> list[float]:
-    """
-    Calculate bounding box [min_lon, min_lat, max_lon, max_lat] from polygon coordinates
+    """Calculate bounding box [min_lon, min_lat, max_lon, max_lat] from polygon coordinates.
 
     Args:
         coordinates: List of [longitude, latitude] pairs from polygon geometry
@@ -79,7 +79,7 @@ class PrefloodSiteMetadata(BaseModel):
         return cls(**metadata)
 
 
-class Sen1Flood11SiteMetadata(BaseModel):
+class Sen1Flood11SiteMetadata(SiteMetadata):
     site_name: str
     iso_cc: str = ""
     post_flood_date: str
@@ -137,7 +137,7 @@ def load_sen1flood11_metadata(path: Path, is_hand_labeled: bool = True) -> dict[
     return sites
 
 
-class TileMetadata(BaseModel):
+class Sen1Flood11TileMetadata(TileMetadata):
     tile_id: str
     bbox: list[float]
     country: str
@@ -173,13 +173,7 @@ class TileMetadata(BaseModel):
         return TileMetadata(**metadata)
 
 
-class PerSiteTilesMetadata(BaseModel):
-    site: str | Literal["all"]
-    tiles: dict[str, TileMetadata]
-
-    def __len__(self) -> int:
-        return len(self.tiles)
-
+class PerSiteTilesMetadata(BasePerSiteTilesMetadata):
     @staticmethod
     def load_site_tiles_metadata(catalog_path: Path, site_name: str) -> dict[str, TileMetadata]:
         tiles_metadata: dict[str, TileMetadata] = {}

@@ -4,9 +4,11 @@ from typing import Literal
 import numpy as np
 import rasterio
 import torch
+from skimage.exposure import match_histograms
 from torch.utils.data import Dataset
 
 from flood_detection_core.config import CLVAEConfig, DataConfig
+from flood_detection_core.data.processing.imaging import resize_to_target
 from flood_detection_core.data.processing.split import get_flood_event_tile_pairs
 
 
@@ -16,6 +18,7 @@ def _read_tif_hw2(path: Path) -> np.ndarray:
         data = src.read()  # (C, H, W)
     # Expecting 2 channels (VV, VH)
     data = np.transpose(data, (1, 2, 0)).astype(np.float32)
+    data = resize_to_target(data)
     return data
 
 
@@ -53,7 +56,7 @@ class FloodDetectionDataset(Dataset):
     """High-performance inference dataset for CLVAE change detection.
 
     - Uses tile-level caching: pre-loads 4 pre-flood images and 1 post-flood image per tile once, then
-      serves stride-1 patches by slicing (no per-patch file IO).
+    serves stride-1 patches by slicing (no per-patch file IO).
     - Pre-flood images are NOT normalized; post-flood image is normalized to [0,1].
     - Reflect padding (pad_size) is applied before patch slicing.
 
@@ -79,6 +82,7 @@ class FloodDetectionDataset(Dataset):
         post_flood_vh_clipped_range: tuple[float, float] | None = None,
         deterministic_preflood: bool = True,
         return_metadata: bool = False,
+        normalize_site_name: bool = True,
     ) -> None:
         super().__init__()
 
@@ -104,11 +108,10 @@ class FloodDetectionDataset(Dataset):
         )
 
         if sites is not None:
-            sites = [s.lower() for s in sites]
+            sites = [s.lower() for s in sites] if normalize_site_name else sites
             raw_tile_pairs = [tp for tp in raw_tile_pairs if tp["site"] in sites]
 
         self.tile_pairs: list[dict] = raw_tile_pairs
-
         # Precompute per-tile window counts (after cropping to min common H/W and padding)
         self._tile_window_counts: list[int] = []
         self._tile_hw: list[tuple[int, int]] = []  # min common H/W per tile before padding
@@ -212,6 +215,7 @@ class FloodDetectionDataset(Dataset):
         # Read and crop post-flood image WITH normalization
         post_arr = _read_tif_hw2(Path(tp["post_flood_path"]))
         post_arr = post_arr[:min_h, :min_w, :]
+        post_arr = match_histograms(pre_imgs[0], post_arr)
 
         # only normalize post-flood image because pre-flood images are already normalized in download
         if self.post_flood_vv_clipped_range and self.post_flood_vh_clipped_range:
@@ -256,13 +260,13 @@ class FloodDetectionDataset(Dataset):
 if __name__ == "__main__":
     # Quick smoke test
 
-    data_cfg = DataConfig.from_yaml(Path("./flood-detection-core/yamls/data.yaml"))
-    clvae_cfg = CLVAEConfig.from_yaml(Path("./flood-detection-core/yamls/model_clvae.yaml"))
+    data_cfg = DataConfig.from_yaml(Path("./flood-detection-core/yamls/data_urban_sar.yaml"))
+    clvae_cfg = CLVAEConfig.from_yaml(Path("./flood-detection-core/yamls/model_clvae_urban_sar.yaml"))
 
     ds = FloodDetectionDataset(
         dataset_type="test",
-        pre_flood_split_csv_path=data_cfg.splits.pre_flood_split,
-        post_flood_split_csv_path=data_cfg.splits.post_flood_split,
+        pre_flood_split_csv_path=data_cfg.csv_files.pre_flood_split,
+        post_flood_split_csv_path=data_cfg.csv_files.post_flood_split,
         num_temporal_length=clvae_cfg.site_specific.num_temporal_length,
         patch_size=clvae_cfg.site_specific.patch_size,
         stride=1,

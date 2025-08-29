@@ -2,7 +2,7 @@ from pathlib import Path
 from typing import Literal
 
 import yaml
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from rich import print
 
@@ -24,7 +24,8 @@ class BaseSettingsWithYaml(BaseSettings):
 
 class OutputConfig(BaseModel):
     format: Literal["numpy", "geotiff"]
-    max_dimension: int = 4000
+    max_dimension: int = 512
+    scale: float = 10.0
 
 
 class FloodSitesConfig(BaseModel):
@@ -48,141 +49,72 @@ class Sen1Flood11GeeDownloadConfig(GEEDownloadConfig):
     target: str | Literal["all", "pretrain"]
     output: OutputConfig
     flood_sites: FloodSitesConfig
-    preprocessing: PreprocessingConfig
+    preprocessing: PreprocessingConfig | None = None
 
     model_config = SettingsConfigDict(yaml_file=gee_download_config_path)
 
 
-class DataDirConfig(BaseModel):
-    data_dir: str | Path
+class UrbanSARGeeDownloadConfig(GEEDownloadConfig):
+    debug: bool = False
+    target: str | Literal["all", "pretrain"]
+    output: OutputConfig
+    flood_sites: FloodSitesConfig
+    preprocessing: PreprocessingConfig | None = None
+
+    model_config = SettingsConfigDict(yaml_file=gee_download_config_path)
 
 
-class ArtifactDirConfig(DataDirConfig):
-    pretrain_dir: str | Path
-    site_specific_dir: str | Path
+class PathConfig(BaseModel): ...
 
 
-class SplitDirConfig(DataDirConfig):
+class DataSourcesConfig(PathConfig):
+    pretrain_cache: str | Path
+    pre_flood: str | Path
+    catalog_source: str | Path
+    ground_truth: str | Path
+    post_flood: str | Path
+    pre_flood_base: str | Path | None = None
+
+
+class ArtifactsDirConfig(PathConfig):
+    pretrain: str | Path
+    site_specific: str | Path
+
+
+class SplitDirConfig(PathConfig):
     pre_flood_split: str | Path
     post_flood_split: str | Path
 
 
-class GEEDataConfig(DataDirConfig):
-    pre_flood_dir: str | Path
-    pretrain_dir: str | Path
-
-    def get_pretrain_metadata_path(self) -> Path:
-        return self.pretrain_dir / "metadata.json"
-
-    def get_pretrain_data_paths(self, patch_id: str | None = None) -> list[Path]:
-        if patch_id is None:
-            return list((self.pretrain_dir).glob("patch_*/*.tif"))
-        return list((self.pretrain_dir / patch_id).glob("*.tif"))
-
-    def get_pre_flood_tile_paths(self, site_name: str, tile_name: str) -> list[Path]:
-        return list(self.pre_flood_dir.glob(f"{site_name}/{tile_name}/*.tif"))
-
-    def get_pre_flood_site_paths(self, site_name: str) -> list[Path]:
-        return list(self.pre_flood_dir.glob(f"{site_name}/{site_name.capitalize()}_*/*.tif"))
-
-    def get_all_pre_flood_tiles_paths(self) -> list[Path]:
-        return list(self.pre_flood_dir.glob("*/*/*.tif"))
-
-    def get_pre_flood_site_metadata_path(self, site_name: str) -> Path:
-        return self.pre_flood_dir / site_name / "overall_metadata.json"
-
-
-class Sen1Flood11HandLabeledDataConfig(DataDirConfig):
-    metadata: str | Path
-    catalog_source: str | Path
-    catalog_label: str | Path
-    permanent_water: str | Path
-    ground_truth: str | Path
-    post_flood_s1: str | Path
-    post_flood_s2: str | Path
-
-    def get_catalog_source_tile_path(self, tile_name: str) -> Path:
-        return self.catalog_source / tile_name / f"{tile_name}.json"
-
-    def get_catalog_source_site_paths(self, site_name: str) -> list[Path]:
-        site_name = site_name.lower()
-        tile_pattern = f"{site_name.capitalize()}_*"
-        return list(self.catalog_source.glob(f"{tile_pattern}/{tile_pattern}.json"))
-
-    def get_catalog_label_tile_path(self, tile_name: str) -> Path:
-        return self.catalog_label / tile_name / f"{tile_name}.json"
-
-    def get_catalog_label_site_paths(self, site_name: str) -> list[Path]:
-        site_name = site_name.lower()
-        tile_pattern = f"{site_name.capitalize()}_*"
-        return list(self.catalog_label.glob(f"{tile_pattern}/{tile_pattern}.json"))
-
-    def get_permanent_water_file_paths(self, tile_name: str) -> list[Path]:
-        return list(self.permanent_water.glob(f"{tile_name}_*.tif"))
-
-    def get_permanent_water_site_paths(self, site_name: str) -> list[Path]:
-        site_name = site_name.lower()
-        tile_pattern = f"{site_name.capitalize()}_*"
-        return list(self.permanent_water.glob(f"{tile_pattern}.tif"))
-
-    def get_ground_truth_file_paths(self, tile_name: str) -> list[Path]:
-        return list(self.ground_truth.glob(f"{tile_name}_*.tif"))
-
-    def get_ground_truth_site_paths(self, site_name: str) -> list[Path]:
-        site_name = site_name.lower()
-        tile_pattern = f"{site_name.capitalize()}_*"
-        return list(self.ground_truth.glob(f"{tile_pattern}.tif"))
-
-    def get_post_flood_s1_file_paths(self, tile_name: str) -> list[Path]:
-        return list(self.post_flood_s1.glob(f"{tile_name}_*.tif"))
-
-    def get_post_flood_s1_site_paths(self, site_name: str) -> list[Path]:
-        site_name = site_name.lower()
-        tile_pattern = f"{site_name.capitalize()}_*"
-        return list(self.post_flood_s1.glob(f"{tile_pattern}.tif"))
-
-    def get_post_flood_s2_file_paths(self, tile_name: str) -> list[Path]:
-        return list(self.post_flood_s2.glob(f"{tile_name}_*.tif"))
-
-    def get_post_flood_s2_site_paths(self, site_name: str) -> list[Path]:
-        site_name = site_name.lower()
-        tile_pattern = f"{site_name.capitalize()}_*"
-        return list(self.post_flood_s2.glob(f"{tile_pattern}.tif"))
+class CSVsConfig(PathConfig):
+    path_mapping: str | Path
+    pre_flood_split: str | Path
+    post_flood_split: str | Path
 
 
 class DataConfig(BaseSettingsWithYaml):
-    relative_to: str | Path = Field(default=".", description="The relative path to the root of the project")
-    gee: GEEDataConfig
-    hand_labeled_sen1flood11: Sen1Flood11HandLabeledDataConfig
-    artifact: ArtifactDirConfig
-    splits: SplitDirConfig
+    site_metadata: str | Path
+    data_dirs: DataSourcesConfig
+    artifacts_dirs: ArtifactsDirConfig
+    csv_files: CSVsConfig
 
     @model_validator(mode="before")
     def validate_paths(cls, values):
         if isinstance(values, dict):
-            # Get the relative_to path (root path)
-            relative_to = values.get("relative_to", ".")
-            root_path = Path(relative_to).absolute()
-            # validate that it exists
-            if not root_path.exists():
-                raise ValueError(f"Root path {root_path} does not exist")
-
-            # Process both gee and sen1flood11 configs
-            for config_name in ["gee", "hand_labeled_sen1flood11", "artifact", "splits"]:
+            for config_name in ["data_dirs", "artifacts_dirs", "csv_files"]:
                 config_values = values.get(config_name)
                 if config_values and isinstance(config_values, dict):
-                    data_dir = config_values.get("data_dir")
-                    if data_dir is not None:
-                        # Convert data_dir to root_path / data_dir
-                        data_dir_path = root_path / data_dir
-                        config_values["data_dir"] = data_dir_path
-
-                        # For all other fields in the config, make them root_path / data_dir / field_value
-                        for field_name, field_value in config_values.items():
-                            if field_name != "data_dir" and field_value is not None:
-                                config_values[field_name] = data_dir_path / field_value
+                    for field_name, field_value in config_values.items():
+                        if field_value is not None:
+                            config_values[field_name] = Path(field_value)
 
         return values
+
+    @field_validator("site_metadata")
+    def validate_site_metadata(cls, v: str | Path) -> Path:
+        if isinstance(v, str):
+            v = Path(v)
+        return v
 
     model_config = SettingsConfigDict(yaml_file=data_config_path)
 
@@ -201,6 +133,8 @@ class CLVAEPretrainConfig(BaseModel):
     scheduler_min_lr: float = 0.00001
     early_stopping_patience: int = 10
     batch_size: int = 32
+    vv_clipped_range: tuple[float, float] | None = None
+    vh_clipped_range: tuple[float, float] | None = None
 
 
 class CLVAESiteSpecificConfig(BaseModel):
@@ -233,8 +167,11 @@ class CLVAEInferenceConfig(BaseModel):
     pad_size: int = 8
     batch_size: int = 512
     threshold: float = 0.5
+    pre_flood_vh_clipped_range: tuple[float, float] | None = None
+    pre_flood_vv_clipped_range: tuple[float, float] | None = None
     post_flood_vh_clipped_range: tuple[float, float] | None = None
     post_flood_vv_clipped_range: tuple[float, float] | None = None
+    normalize_site_name: bool = True
 
 
 class GeometricAugmentationConfig(BaseModel):

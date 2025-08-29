@@ -1,0 +1,13 @@
+debug: false
+
+target: "all"
+
+output:
+  format: "geotiff"
+  max_dimension: 512
+  scale: 18.6
+
+flood_sites:
+  num_pre_images: 8
+  days_before_flood_max: 120
+  days_before_flood_min: 1

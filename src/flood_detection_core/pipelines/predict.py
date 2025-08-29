@@ -1,5 +1,4 @@
-"""
-Inference pipeline v2 for CLVAE change detection using FloodDetectionInferenceDataset.
+"""Inference pipeline v2 for CLVAE change detection using FloodDetectionInferenceDataset.
 
 This module implements Algorithm 1 from the paper with the current dataset API:
 - Mirror padding (pad size typically 8)
@@ -183,7 +182,7 @@ def generate_distance_maps(
     model_path: Path | str | None
         Checkpoint path containing model weights. If None, the latest checkpoint is used.
     save_results: bool
-        Whether to save the results to the data_config.artifact.site_specific_dir.
+        Whether to save the results to the data_config.artifacts_dirs.site_specific.
     Returns
     -------
     dict[str, np.ndarray]
@@ -192,23 +191,26 @@ def generate_distance_maps(
     device = "cuda" if torch.cuda.is_available() else "cpu"
     if not model_path:
         latest_run = get_site_specific_latest_run(site, data_config)
-        model_info = get_best_model_info(data_config.artifact.site_specific_dir / latest_run)
+        model_info = get_best_model_info(data_config.artifacts_dirs.site_specific / latest_run)
         model_path = Path(model_info["checkpoint_path"])
         print(f"No model path provided, using latest checkpoint from {model_path}")
     model = _load_model(model_path, device=device)
 
     dataset = FloodDetectionDataset(
         dataset_type="test",
-        pre_flood_split_csv_path=data_config.splits.pre_flood_split,
-        post_flood_split_csv_path=data_config.splits.post_flood_split,
+        pre_flood_split_csv_path=data_config.csv_files.pre_flood_split,
+        post_flood_split_csv_path=data_config.csv_files.post_flood_split,
         sites=[site],
         num_temporal_length=model_config.inference.num_temporal_length,
         patch_size=model_config.inference.patch_size,
         stride=model_config.inference.patch_stride,
         pad_size=model_config.inference.pad_size,
+        pre_flood_vh_clipped_range=model_config.inference.pre_flood_vh_clipped_range,
+        pre_flood_vv_clipped_range=model_config.inference.pre_flood_vv_clipped_range,
         post_flood_vh_clipped_range=model_config.inference.post_flood_vh_clipped_range,
         post_flood_vv_clipped_range=model_config.inference.post_flood_vv_clipped_range,
         return_metadata=True,
+        normalize_site_name=model_config.inference.normalize_site_name,
     )
 
     if wandb_run:
@@ -286,10 +288,11 @@ def generate_distance_maps(
     for tile_id, coords_dict in per_tile_distances.items():
         # Recover original unpadded H/W from maxima of padded top-left indices
         # i_max = min_h + 2*pad - patch_size  =>  min_h = i_max - 2*pad + patch_size
-        i_max = per_tile_i_max.get(tile_id, 0)
-        j_max = per_tile_j_max.get(tile_id, 0)
-        H = max(0, i_max - 2 * pad_size + patch_size)
-        W = max(0, j_max - 2 * pad_size + patch_size)
+        # i_max = per_tile_i_max.get(tile_id, 0)
+        # j_max = per_tile_j_max.get(tile_id, 0)
+        # H = max(0, i_max - 2 * pad_size + patch_size)
+        # W = max(0, j_max - 2 * pad_size + patch_size)
+        H, W = 512, 512
         dist_arr = np.zeros((H, W), dtype=np.float32)
         for (r, c), v in coords_dict.items():
             if 0 <= r < H and 0 <= c < W:
@@ -302,19 +305,19 @@ def generate_distance_maps(
         print(f"Saving distance maps to [green]{distance_maps_dir}[/green]")
         for tile_id, distance_map in distance_maps.items():
             np.save(distance_maps_dir / f"{tile_id}_distance_map.npy", distance_map)
-        if wandb_run:
-            metadata = {
-                "site": site,
-                "datetime": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "local_path": (distance_maps_dir / f"{tile_id}_distance_map.npy").absolute(),
-                "model_path": model_path,
-            }
-            artifact = wandb.Artifact("distance_maps", type="dataset", metadata=metadata)
-            artifact.add_file(
-                local_path=distance_maps_dir / f"{tile_id}_distance_map.npy",
-                name=f"distance_maps/{tile_id}_distance_map.npy",
-            )
-            wandb_run.log_artifact(artifact)
+            if wandb_run:
+                metadata = {
+                    "site": site,
+                    "datetime": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "local_path": (distance_maps_dir / f"{tile_id}_distance_map.npy").absolute(),
+                    "model_path": model_path,
+                }
+                artifact = wandb.Artifact("distance_maps", type="dataset", metadata=metadata)
+                artifact.add_file(
+                    local_path=distance_maps_dir / f"{tile_id}_distance_map.npy",
+                    name=f"distance_maps/{tile_id}_distance_map.npy",
+                )
+                wandb_run.log_artifact(artifact)
 
     return distance_maps
 
@@ -326,7 +329,9 @@ def load_distance_maps(
         if not site or not data_config:
             raise ValueError("site and data_config must be provided if run_dir is not provided")
         latest_run = get_site_specific_latest_run(site, data_config)
-        run_dir = data_config.artifact.site_specific_dir / latest_run
+        run_dir = data_config.artifacts_dirs.site_specific / latest_run
     distance_maps_dir = run_dir / "distance_maps"
     npy_files = list(distance_maps_dir.glob("*.npy"))
-    return {file.stem.replace("_distance_map", ""): np.load(file) for file in npy_files}
+    # print(npy_files)
+    # return npy_files
+    return {pth.stem.replace("_distance_map", ""): np.load(pth) for pth in npy_files}

@@ -75,8 +75,8 @@ def site_specific_train(
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    if not data_config.artifact.site_specific_dir.exists():
-        data_config.artifact.site_specific_dir.mkdir(parents=True, exist_ok=True)
+    if not data_config.artifacts_dirs.site_specific.exists():
+        data_config.artifacts_dirs.site_specific.mkdir(parents=True, exist_ok=True)
 
     config = dict(
         input_channels=kwargs.get("input_channels", model_config.site_specific.input_channels),
@@ -111,7 +111,7 @@ def site_specific_train(
         print(f"  {k}: {v}")
 
     run_name = run_name or get_site_specific_run_name(site_name)
-    model_dir = data_config.artifact.site_specific_dir / run_name
+    model_dir = data_config.artifacts_dirs.site_specific / run_name
     model_dir.mkdir(parents=True, exist_ok=True)
 
     with open(model_dir / "config.json", "w") as f:
@@ -143,7 +143,7 @@ def site_specific_train(
         model.load_state_dict(state_dict["model_state"])
 
     dataset = SiteSpecificTrainingDataset(
-        pre_flood_split_csv_path=data_config.splits.pre_flood_split,
+        pre_flood_split_csv_path=data_config.csv_files.pre_flood_split,
         sites=[site_name],
         num_temporal_length=config["num_temporal_length"],
         patch_size=config["patch_size"],
@@ -154,7 +154,7 @@ def site_specific_train(
         vv_clipped_range=config["vv_clipped_range"],
         vh_clipped_range=config["vh_clipped_range"],
     )
-    train_dataset, val_dataset = torch.utils.data.random_split(dataset, [0.85, 0.15])
+    train_dataset, val_dataset = torch.utils.data.random_split(dataset, [0.8, 0.2])
     train_size = len(train_dataset)
     val_size = len(val_dataset)
     print(f"Site {site_name} - Train size: {train_size}, Val size: {val_size}")
@@ -393,7 +393,7 @@ def site_specific_train(
     print(f"Best validation loss: {best_val_loss:.6f}")
     print(f"Model saved in: {model_dir}")
 
-    with open(data_config.artifact.site_specific_dir / f"{site_name}_latest_run.txt", "w") as f:
+    with open(data_config.artifacts_dirs.site_specific / f"{site_name}_latest_run.txt", "w") as f:
         f.write(model_dir.name)
 
     if wandb_run:
@@ -414,11 +414,11 @@ if __name__ == "__main__":
     from flood_detection_core.config import CLVAEConfig, DataConfig
 
     use_wandb = False
-    data_config = DataConfig.from_yaml("./flood-detection-core/yamls/data.yaml")
-    model_config = CLVAEConfig.from_yaml("./flood-detection-core/yamls/model_clvae.yaml")
+    data_config = DataConfig.from_yaml(Path("./flood-detection-core/yamls/data_urban_sar.yaml"))
+    model_config = CLVAEConfig.from_yaml("./flood-detection-core/yamls/model_clvae_urban_sar.yaml")
 
-    pretrained_model_path = "artifacts/pretrain/pretrain_20250814_091623/pretrained_model_48.pth"
-    site_name = "bolivia"
+    pretrained_model_path = "artifacts/pretrain_urban_sar/pretrain_20250825_160251/pretrained_model_1.pth"
+    site_name = "Houston"
 
     test_kwargs = {
         "max_epochs": 2,
@@ -428,7 +428,9 @@ if __name__ == "__main__":
     }
     if use_wandb:
         with wandb.init(
-            project="flood-detection-dl", name=f"clvae-site-specific-{site_name}", tags=["clvae", "site-specific"]
+            project="flood-detection-dl",
+            name=f"clvae-site-specific-{site_name}",
+            tags=["clvae", "site-specific", "urban_sar"],
         ) as run:
             model = site_specific_train(
                 data_config,

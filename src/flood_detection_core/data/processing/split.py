@@ -1,4 +1,5 @@
 import csv
+import datetime
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -22,7 +23,7 @@ def split_data(
 ) -> None:
     site_tiles_mapping = {}
     for site in HandLabeledSen1Flood11Sites:
-        tile_dir_paths = list(data_config.gee.pre_flood_dir.glob(f"{site}/*/"))
+        tile_dir_paths = list(data_config.data_dirs.pre_flood.glob(f"{site}/*/"))
         tiles = [tile_dir_path.name for tile_dir_path in tile_dir_paths]
         if site == "bolivia":
             tiles = [tile for tile in tiles if tile in BOLIVIA_ALLOWED_TILES]
@@ -58,18 +59,14 @@ def split_data(
     pre_flood_split = []
     post_flood_split = []
 
-    data_root = Path(data_config.relative_to).absolute()
+    data_root = Path(".").absolute()
 
     for site, data_tiles_mapping in site_tiles_mapping.items():
         for dataset_type, tiles in data_tiles_mapping.items():
             for tile in tiles:
-                pre_flood_paths = list(data_config.gee.pre_flood_dir.glob(f"{site}/{tile}/*.tif"))
-                post_flood_paths = list(
-                    data_config.hand_labeled_sen1flood11.post_flood_s1.glob(f"{tile.capitalize()}_*.tif")
-                )
-                ground_truth_paths = list(
-                    data_config.hand_labeled_sen1flood11.ground_truth.glob(f"{tile.capitalize()}_*.tif")
-                )
+                pre_flood_paths = list(data_config.data_dirs.pre_flood.glob(f"{site}/{tile}/*.tif"))
+                post_flood_paths = list(data_config.data_dirs.post_flood.glob(f"{tile.capitalize()}_*.tif"))
+                ground_truth_paths = list(data_config.data_dirs.ground_truth.glob(f"{tile.capitalize()}_*.tif"))
                 for path in pre_flood_paths:
                     pre_flood_split.append(
                         {
@@ -96,16 +93,16 @@ def split_data(
     print("Example of post-flood split:")
     print(post_flood_split[:2])
 
-    print(f"Saving splits to `{data_config.splits.data_dir}/`")
-    with open(data_config.splits.pre_flood_split, "w") as f:
+    with open(data_config.csv_files.pre_flood_split, "w") as f:
         writer = csv.DictWriter(f, fieldnames=pre_flood_split[0].keys())
         writer.writeheader()
         writer.writerows(pre_flood_split)
-
-    with open(data_config.splits.post_flood_split, "w") as f:
+    print(f"Saved pre-flood split to `{data_config.csv_files.pre_flood_split}`")
+    with open(data_config.csv_files.post_flood_split, "w") as f:
         writer = csv.DictWriter(f, fieldnames=post_flood_split[0].keys())
         writer.writeheader()
         writer.writerows(post_flood_split)
+    print(f"Saved post-flood split to `{data_config.csv_files.post_flood_split}`")
 
 
 def get_flood_event_tile_pairs(
@@ -145,11 +142,14 @@ def get_flood_event_tile_pairs(
     tile_pairs = []
     for site, tile_path_mapping in site_tile_path_mapping.items():
         for tile, tile_paths in tile_path_mapping.items():
+            pre_flood_paths = tile_paths["pre_flood"]
+            dates = [datetime.datetime.strptime(Path(pth).stem.split("_")[-1], "%Y-%m-%d") for pth in pre_flood_paths]
+            pre_flood_paths = [pth for _, pth in sorted(zip(dates, pre_flood_paths))]
             tile_pairs.append(
                 {
                     "tile_id": tile,
                     "site": site,
-                    "pre_flood_paths": tile_paths["pre_flood"],
+                    "pre_flood_paths": pre_flood_paths,
                     "post_flood_path": tile_paths["post_flood"][0],
                     "ground_truth_path": tile_paths["ground_truth"][0],
                 }

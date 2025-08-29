@@ -1,0 +1,16 @@
+site_metadata: "./data/sen1flood11/v1.1/Sen1Floods11_Metadata.geojson"
+data_dirs:
+  pretrain_cache: "./data/ee/pretrain"
+  pre_flood: "./data/ee/pre_flood"
+  catalog_source: "./data/sen1flood11/v1.1/catalog/sen1floods11_hand_labeled_source"
+  ground_truth: "./data/sen1flood11/v1.1/data/flood_events/HandLabeled/LabelHand"
+  post_flood: "./data/sen1flood11/v1.1/data/flood_events/HandLabeled/S1Hand"
+
+artifacts_dirs:
+  pretrain: "./artifacts/pretrain"
+  site_specific: "./artifacts/site_specific"
+
+csv_files:
+  path_mapping: ""
+  pre_flood_split: "./data/splits/pre_flood_split.csv"
+  post_flood_split: "./data/splits/post_flood_split.csv"

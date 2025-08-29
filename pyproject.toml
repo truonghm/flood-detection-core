@@ -25,6 +25,7 @@ dependencies = [
     "wandb>=0.21.0",
     "torchmetrics>=1.8.0",
     "pandas>=2.2.3",
+    "duckdb>=1.3.2",
 ]
 
 [build-system]
@@ -53,6 +54,18 @@ torchvision = [
 
 [dependency-groups]
 dev = [
+    "datasets>=4.0.0",
     "pre-commit>=4.2.0",
+    "sentinelsat>=1.2.1",
     "vastai>=0.2.8",
 ]
+
+[[tool.uv.index]]
+name = "geospatial_wheels"
+url = "https://nathanjmcdougall.github.io/geospatial-wheels-index/"
+explicit = true
+
+[[tool.uv.index]]
+name = "gdal-wheels"
+url = "https://gitlab.com/api/v4/projects/61637378/packages/pypi/simple"
+explicit = true

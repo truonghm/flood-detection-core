@@ -5,6 +5,7 @@ target: "all"
 output:
   format: "geotiff"
   max_dimension: 512
+  scale: 10
 
 flood_sites:
   num_pre_images: 8

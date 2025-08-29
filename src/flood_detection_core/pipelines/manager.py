@@ -131,7 +131,7 @@ class TrainingManager:
             log_latents=True,
         )
 
-    def run(
+    def run_train(
         self,
         training_input: TrainingInput,
         use_wandb: bool = False,
@@ -251,13 +251,19 @@ class TrainingManager:
             else:
                 self.site_specific(site=site_name, run_name=site_specific_run_name, wandb_run=None, **kwargs)
 
+    def run_predict(
+        self,
+        training_input: TrainingInput,
+        use_wandb: bool = False,
+        extra_tags: list[str] | None = None,
+        notes: str | None = None,
+    ):
         # step 3: predict
-        print("Starting predict")
         for site_specific_input in training_input.site_specific:
             site_name = site_specific_input.site
             print(f"Starting prediction and eval for {site_name}")
             latest_run = get_site_specific_latest_run(site_name, self.data_config)
-            model_info = get_best_model_info(self.data_config.artifact.site_specific_dir / latest_run)
+            model_info = get_best_model_info(self.data_config.artifacts_dirs.site_specific / latest_run)
             model_path = Path(model_info["checkpoint_path"])
             if use_wandb:
                 with wandb.init(
@@ -271,7 +277,6 @@ class TrainingManager:
                     distance_maps = self.predict(site=site_name, wandb_run=run, model_path=model_path)
             else:
                 distance_maps = self.predict(site=site_name, wandb_run=None, model_path=model_path)
-
             ground_truths = load_ground_truths(site=site_name, data_config=self.data_config)
 
             th_test_df = test_thresholds(

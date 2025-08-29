@@ -1,0 +1,16 @@
+site_metadata: "/media/truonghm/EXT4_SSD_500GB/urban_sar_floods/overall_metadata.json"
+data_dirs:
+  pretrain_cache: "./data/ee_urban_sar/pretrain"
+  pre_flood: "/media/truonghm/EXT4_SSD_500GB/urban_sar_floods/pre_flood"
+  catalog_source: "./data/sen1flood11/v1.1/catalog/sen1floods11_hand_labeled_source"
+  ground_truth: "./data/sen1flood11/v1.1/data/flood_events/HandLabeled/LabelHand"
+  post_flood: "./data/sen1flood11/v1.1/data/flood_events/HandLabeled/S1Hand"
+
+artifacts_dirs:
+  pretrain: "./artifacts/pretrain_urban_sar"
+  site_specific: "./artifacts/site_specific_urban_sar"
+
+csv_files:
+  path_mapping: "/media/truonghm/EXT4_SSD_500GB/urban_sar_floods/sampled_path_mapping_small.csv"
+  pre_flood_split: "/media/truonghm/EXT4_SSD_500GB/urban_sar_floods/pre_flood_split.csv"
+  post_flood_split: "/media/truonghm/EXT4_SSD_500GB/urban_sar_floods/post_flood_split.csv"

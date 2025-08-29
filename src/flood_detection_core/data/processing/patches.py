@@ -22,11 +22,15 @@ class PreTrainPatchesExtractor:
         num_patches: int = 100,
         num_temporal_length: int = 4,
         patch_size: int = 16,
+        vv_clipped_range: tuple[float, float] | None = None,
+        vh_clipped_range: tuple[float, float] | None = None,
     ) -> None:
         self.split_csv_path = split_csv_path
         self.num_patches = num_patches
         self.num_temporal_length = num_temporal_length
         self.patch_size = patch_size
+        self.vv_clipped_range = vv_clipped_range
+        self.vh_clipped_range = vh_clipped_range
         self.cache_key = get_patches_cache_key(self.num_patches, self.num_temporal_length, self.patch_size)
         self.tile_to_paths = self.load_pre_flood_split_csv(self.split_csv_path)
         self.cache_dir = output_dir / self.cache_key
@@ -182,6 +186,26 @@ class PreTrainPatchesExtractor:
                 data = np.load(img_path)
             else:
                 raise ValueError(f"Invalid extension: {img_path.suffix}")
+
+            # Apply normalization if clipped ranges are provided
+            if self.vv_clipped_range is not None:
+                # handle nan values
+                vv_band = data[:, :, 0].copy()
+                vv_band = np.where(np.isnan(vv_band), self.vv_clipped_range[0], vv_band)
+                data[:, :, 0] = np.clip(
+                    (vv_band - self.vv_clipped_range[0]) / (self.vv_clipped_range[1] - self.vv_clipped_range[0]),
+                    0,
+                    1,
+                )
+            if self.vh_clipped_range is not None:
+                vh_band = data[:, :, 1].copy()
+                vh_band = np.where(np.isnan(vh_band), self.vh_clipped_range[0], vh_band)
+                data[:, :, 1] = np.clip(
+                    (vh_band - self.vh_clipped_range[0]) / (self.vh_clipped_range[1] - self.vh_clipped_range[0]),
+                    0,
+                    1,
+                )
+
             images_data.append(data)
 
         patch_size = self.patch_size

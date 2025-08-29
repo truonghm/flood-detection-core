@@ -25,7 +25,7 @@ class GEEDownloader:
     def __init__(self, download_config: GEEDownloadConfig, data_config: DataConfig):
         self.download_config = download_config
         self.data_config = data_config
-        self.sen1flood11_metadata = load_sen1flood11_metadata(data_config.hand_labeled_sen1flood11.metadata)
+        self.sen1flood11_metadata = load_sen1flood11_metadata(data_config.site_metadata)
 
     @staticmethod
     def get_s1_collection(
@@ -35,8 +35,7 @@ class GEEDownloader:
         orbit_pass: str,
         relative_orbit: int,
     ) -> ee.ImageCollection:
-        """
-        Get Sentinel-1 collection filtered by area, date, and exact orbital parameters
+        """Get Sentinel-1 collection filtered by area, date, and exact orbital parameters.
 
         Args:
             aoi: Earth Engine geometry defining the area of interest
@@ -75,8 +74,7 @@ class GEEDownloader:
         vv_clipped_range: tuple[float, float],
         vh_clipped_range: tuple[float, float],
     ) -> ee.Image:
-        """
-        Preprocess Sentinel-1 image according to CLVAE paper specifications
+        """Preprocess Sentinel-1 image according to CLVAE paper specifications.
 
         Args:
             image: Earth Engine image
@@ -102,9 +100,8 @@ class GEEDownloader:
 
     @staticmethod
     def mosaic_by_unique_date(collection: ee.ImageCollection) -> ee.ImageCollection:
-        """
-        Mosaic images that share the same calendar date so that each date yields
-        a single image covering the AOI as completely as possible.
+        """Mosaic images that share the same calendar date so that each date yields a single image covering the AOI
+        as completely as possible.
 
         Returns an image collection where each image corresponds to one unique
         date and carries a normalized `system:time_start` (00:00 UTC of that day)
@@ -125,8 +122,7 @@ class GEEDownloader:
             time_start = ee.Date.parse("YYYY-MM-dd", d).millis()
             mosaicked = day_coll.mosaic()
             return (
-                mosaicked
-                .set("date", d)
+                mosaicked.set("date", d)
                 .set("system:time_start", time_start)
                 .copyProperties(first, ["relativeOrbitNumber_start"])
             )
@@ -207,28 +203,28 @@ class SitePrefloodDataDownloader(GEEDownloader):
         site_metadata = self.sen1flood11_metadata[site_name]
 
         tiles_metadata = PerSiteTilesMetadata.from_json(
-            self.data_config.hand_labeled_sen1flood11.catalog_source,
+            self.data_config.data_dirs.catalog_source,
             site_name,
         )
 
-        post_flood_date = site_metadata.post_flood_date
+        # post_flood_date = site_metadata.post_flood_date
         orbit_pass = site_metadata.orbit_pass
         relative_orbit = site_metadata.relative_orbit
 
         print(f"Downloading pre-flood data for {site_name}:")
-        print(f"  Post-flood date: {post_flood_date}")
+        # print(f"  Post-flood date: {post_flood_date}")
         print(f"  Orbit pass: {orbit_pass}")
         print(f"  Relative orbit: {relative_orbit}")
         print(f"  Found {len(tiles_metadata.tiles)} individual tiles to process")
 
-        post_flood_dt = datetime.datetime.strptime(post_flood_date, "%Y-%m-%d")
-        pre_flood_end = post_flood_dt - datetime.timedelta(days=days_before_flood_min)  # Day before flood
-        pre_flood_start = post_flood_dt - datetime.timedelta(days=days_before_flood_max)  # 4 months before
+        # post_flood_dt = datetime.datetime.strptime(post_flood_date, "%Y-%m-%d")
+        # pre_flood_end = post_flood_dt - datetime.timedelta(days=days_before_flood_min)  # Day before flood
+        # pre_flood_start = post_flood_dt - datetime.timedelta(days=days_before_flood_max)  # 4 months before
 
-        pre_flood_start_str = pre_flood_start.strftime("%Y-%m-%d")
-        pre_flood_end_str = pre_flood_end.strftime("%Y-%m-%d")
+        # pre_flood_start_str = pre_flood_start.strftime("%Y-%m-%d")
+        # pre_flood_end_str = pre_flood_end.strftime("%Y-%m-%d")
 
-        print(f"  Pre-flood period: {pre_flood_start_str} to {pre_flood_end_str}")
+        # print(f"  Pre-flood period: {pre_flood_start_str} to {pre_flood_end_str}")
 
         all_tile_metadata = {}
         successful_tiles = 0
@@ -237,8 +233,19 @@ class SitePrefloodDataDownloader(GEEDownloader):
             print(f"\n  Processing tile {tile_id}...")
 
             try:
+                post_flood_date = tile_data.post_flood_date
+                post_flood_dt = datetime.datetime.strptime(post_flood_date, "%Y-%m-%d")
+                pre_flood_end = post_flood_dt - datetime.timedelta(days=days_before_flood_min)  # Day before flood
+                pre_flood_start = post_flood_dt - datetime.timedelta(days=days_before_flood_max)  # 4 months before
+
+                pre_flood_start_str = pre_flood_start.strftime("%Y-%m-%d")
+                pre_flood_end_str = pre_flood_end.strftime("%Y-%m-%d")
+
+                print(f"  Post-flood date: {post_flood_date}")
+                print(f"  Pre-flood period: {pre_flood_start_str} to {pre_flood_end_str}")
+
                 bbox = tile_data.bbox
-                tile_post_flood_date = tile_data.post_flood_date
+                tile_post_flood_date = post_flood_date
                 print(f"    Tile bbox: {bbox}")
                 print("    Tile dimensions should be 512x512")
 
@@ -376,7 +383,7 @@ class SitePrefloodDataDownloader(GEEDownloader):
 
         overall_metadata = {
             "site_name": site_name,
-            "post_flood_date": post_flood_date,
+            # "post_flood_date": post_flood_date,
             "orbit_pass": orbit_pass,
             "relative_orbit": relative_orbit,
             "total_tiles": len(tiles_metadata),
@@ -437,7 +444,7 @@ class SitePrefloodDataDownloader(GEEDownloader):
         )
         if self.download_config.target == "all":
             return self.download_all(
-                output_dir=self.data_config.gee.pre_flood_dir,
+                output_dir=self.data_config.data_dirs.pre_flood,
                 vv_clipped_range=vv_clipped_range,
                 vh_clipped_range=vh_clipped_range,
                 num_pre_images=self.download_config.flood_sites.num_pre_images,
@@ -450,7 +457,7 @@ class SitePrefloodDataDownloader(GEEDownloader):
 
         return self.download_site(
             site_name=self.download_config.target,
-            output_dir=self.data_config.gee.pre_flood_dir,
+            output_dir=self.data_config.data_dirs.pre_flood,
             vv_clipped_range=vv_clipped_range,
             vh_clipped_range=vh_clipped_range,
             num_pre_images=self.download_config.flood_sites.num_pre_images,
@@ -470,6 +477,6 @@ if __name__ == "__main__":
     download_config = Sen1Flood11GeeDownloadConfig.from_yaml(
         "./flood-detection-core/src/flood_detection_core/yamls/gee_download_config.yaml"
     )
-    data_config = DataConfig.from_yaml("./flood-detection-core/src/flood_detection_core/yamls/data_config.yaml")
+    data_config = DataConfig.from_yaml("./flood-detection-core/yamls/data_sen1flood11.yaml")
     downloader = SitePrefloodDataDownloader(download_config, data_config)
     downloader()

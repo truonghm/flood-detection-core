@@ -2,9 +2,11 @@ from typing import Annotated
 
 import typer
 
+from .data.constants import HandLabeledSen1Flood11Sites, UrbanSARSites
+
 app = typer.Typer()
 
-default_data_config_path = "./flood-detection-core/yamls/data.yaml"
+default_data_config_path = "./flood-detection-core/yamls/data_sen1flood11.yaml"
 default_model_config_path = "./flood-detection-core/yamls/model_clvae.yaml"
 default_download_config_path = "./flood-detection-core/yamls/gee.yaml"
 
@@ -159,9 +161,48 @@ def split_data(
 
 
 @app.command()
-def train(
+def run_train(
     data_config_path: Annotated[str, typer.Option("--data-config-path")] = default_data_config_path,
     model_config_path: Annotated[str, typer.Option("--model-config-path")] = default_model_config_path,
+    dataset: Annotated[str, typer.Option("--dataset")] = "sen1flood11",
+    use_wandb: Annotated[bool, typer.Option("--wandb/--no-wandb")] = True,
+    extra_tags: Annotated[list[str], typer.Option("--extra-tags")] = [],
+    notes: Annotated[str | None, typer.Option("--notes")] = None,
+) -> None:
+    from flood_detection_core.config import CLVAEConfig, DataConfig
+    from flood_detection_core.pipelines import TrainingInput, TrainingManager
+
+    if dataset == "sen1flood11":
+        sites = HandLabeledSen1Flood11Sites
+    elif dataset == "urban_sar":
+        sites = UrbanSARSites
+    else:
+        raise ValueError("Invalid input for dataset.")
+
+    data_config = DataConfig.from_yaml(data_config_path)
+    model_config = CLVAEConfig.from_yaml(model_config_path)
+    ss_input = [{"site": site, "mode": "fresh", "path": None} for site in sites]
+    training_input_raw = {
+        "pretrain": {"mode": "fresh", "path": None},
+        "site_specific": ss_input,
+    }
+    training_input = TrainingInput(**training_input_raw)
+    print(training_input)
+
+    training_manager = TrainingManager(data_config, model_config)
+    training_manager.run_train(
+        training_input,
+        use_wandb=use_wandb,
+        extra_tags=extra_tags,
+        notes=notes,
+    )
+
+
+@app.command()
+def run_predict(
+    data_config_path: Annotated[str, typer.Option("--data-config-path")] = default_data_config_path,
+    model_config_path: Annotated[str, typer.Option("--model-config-path")] = default_model_config_path,
+    dataset: Annotated[str, typer.Option("--dataset")] = "sen1flood11",
     use_wandb: Annotated[bool, typer.Option("--wandb/--no-wandb")] = True,
     extra_tags: Annotated[list[str], typer.Option("--extra-tags")] = [],
     notes: Annotated[str | None, typer.Option("--notes")] = None,
@@ -172,20 +213,71 @@ def train(
     data_config = DataConfig.from_yaml(data_config_path)
     model_config = CLVAEConfig.from_yaml(model_config_path)
 
+    if dataset == "sen1flood11":
+        sites = HandLabeledSen1Flood11Sites
+    elif dataset == "urban_sar":
+        sites = UrbanSARSites
+    else:
+        raise ValueError("Invalid input for dataset.")
+
+    ss_input = [{"site": site, "mode": "fresh", "path": None} for site in sites]
     training_input_raw = {
         "pretrain": {"mode": "fresh", "path": None},
-        "site_specific": [
-            {"site": "bolivia", "mode": "fresh", "path": None},
-            {"site": "mekong", "mode": "fresh", "path": None},
-            {"site": "somalia", "mode": "fresh", "path": None},
-            {"site": "spain", "mode": "fresh", "path": None},
-        ],
+        "site_specific": ss_input,
     }
     training_input = TrainingInput(**training_input_raw)
     print(training_input)
 
     training_manager = TrainingManager(data_config, model_config)
-    training_manager.run(
+
+    training_manager.run_predict(
+        training_input,
+        use_wandb=use_wandb,
+        extra_tags=extra_tags,
+        notes=notes,
+    )
+
+
+@app.command()
+def run_all(
+    data_config_path: Annotated[str, typer.Option("--data-config-path")] = default_data_config_path,
+    model_config_path: Annotated[str, typer.Option("--model-config-path")] = default_model_config_path,
+    dataset: Annotated[str, typer.Option("--dataset")] = "sen1flood11",
+    use_wandb: Annotated[bool, typer.Option("--wandb/--no-wandb")] = True,
+    extra_tags: Annotated[list[str], typer.Option("--extra-tags")] = [],
+    notes: Annotated[str | None, typer.Option("--notes")] = None,
+) -> None:
+    from flood_detection_core.config import CLVAEConfig, DataConfig
+    from flood_detection_core.pipelines import TrainingInput, TrainingManager
+
+    data_config = DataConfig.from_yaml(data_config_path)
+    model_config = CLVAEConfig.from_yaml(model_config_path)
+
+    if dataset == "sen1flood11":
+        sites = HandLabeledSen1Flood11Sites
+    elif dataset == "urban_sar":
+        # sites = UrbanSARSites
+        sites = ["Houston"]
+    else:
+        raise ValueError("Invalid input for dataset.")
+
+    ss_input = [{"site": site, "mode": "fresh", "path": None} for site in sites]
+    training_input_raw = {
+        "pretrain": {"mode": "fresh", "path": None},
+        "site_specific": ss_input,
+    }
+    training_input = TrainingInput(**training_input_raw)
+    print(training_input)
+
+    training_manager = TrainingManager(data_config, model_config)
+    training_manager.run_train(
+        training_input,
+        use_wandb=use_wandb,
+        extra_tags=extra_tags,
+        notes=notes,
+    )
+
+    training_manager.run_predict(
         training_input,
         use_wandb=use_wandb,
         extra_tags=extra_tags,

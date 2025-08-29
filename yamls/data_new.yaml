@@ -1,0 +1,44 @@
+gee:
+  pre_flood_dir: "./data/ee/pre_flood"
+  pretrain_dir: "./data/ee/pretrain"
+
+hand_labeled_sen1flood11:
+  metadata: "./data/sen1flood11/v1.1/Sen1Floods11_Metadata.geojson"
+  catalog_source: "./data/sen1flood11/v1.1/catalog/sen1floods11_hand_labeled_source"
+  catalog_label: "./data/sen1flood11/v1.1/catalog/sen1floods11_hand_labeled_label"
+  permanent_water: "./data/sen1flood11/v1.1/data/flood_events/HandLabeled/JRCWaterHand"
+  ground_truth: "./data/sen1flood11/v1.1/data/flood_events/HandLabeled/LabelHand"
+  post_flood_s1: "./data/sen1flood11/v1.1/data/flood_events/HandLabeled/S1Hand"
+  post_flood_s2: "./data/sen1flood11/v1.1/data/flood_events/HandLabeled/S2Hand"
+
+artifact:
+  pretrain_dir: "./artifacts/pretrain"
+  site_specific_dir: "./artifacts/site_specific"
+
+splits:
+  pre_flood_split: "./data/splits/pre_flood_split.csv"
+  post_flood_split: "./data/splits/post_flood_split.csv"
+
+urban_sar:
+  no_flood_gt_dir: "/media/truonghm/EXT4_SSD_500GB/urban_sar_floods/01_NF/GT/"
+  no_flood_sar_dir: "/media/truonghm/EXT4_SSD_500GB/urban_sar_floods/01_NF/SAR/"
+  flood_urban_gt_dir: "/media/truonghm/EXT4_SSD_500GB/urban_sar_floods/03_FU/GT/"
+  flood_urban_sar_dir: "/media/truonghm/EXT4_SSD_500GB/urban_sar_floods/03_FU/SAR/"
+  flood_open_gt_dir: "/media/truonghm/EXT4_SSD_500GB/urban_sar_floods/02_FO/GT/"
+  flood_open_sar_dir: "/media/truonghm/EXT4_SSD_500GB/urban_sar_floods/02_FO/SAR/"
+
+urban_sar_new:
+  sites_metadata: "./data/urban_sar_new/sites_metadata.csv"
+  metadata_dir: "./data/urban_sar_new/metadata"
+  nf_pre_flood_base_dir: "./data/urban_sar_new/nf/pre_flood_base"
+  nf_pre_flood_dir: "./data/urban_sar_new/nf/pre_flood"
+  nf_post_flood_dir: "./data/urban_sar_new/nf/post_flood"
+  nf_gt_dir: "./data/urban_sar_new/nf/gt"
+  fu_pre_flood_base_dir: "./data/urban_sar_new/fu/pre_flood_base"
+  fu_pre_flood_dir: "./data/urban_sar_new/fu/pre_flood"
+  fu_post_flood_dir: "./data/urban_sar_new/fu/post_flood"
+  fu_gt_dir: "./data/urban_sar_new/fu/gt"
+  fo_pre_flood_base_dir: "./data/urban_sar_new/fo/pre_flood_base"
+  fo_pre_flood_dir: "./data/urban_sar_new/fo/pre_flood"
+  fo_post_flood_dir: "./data/urban_sar_new/fo/post_flood"
+  fo_gt_dir: "./data/urban_sar_new/fo/gt"

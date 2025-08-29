@@ -25,6 +25,8 @@ class PretrainDataset(Dataset):
         num_patches: int = 100,
         num_temporal_length: int = 4,
         patch_size: int = 16,
+        vv_clipped_range: tuple[float, float] | None = None,
+        vh_clipped_range: tuple[float, float] | None = None,
         transform: Callable | None = None,
     ) -> None:
         self.pretrain_dir = pretrain_dir
@@ -38,6 +40,8 @@ class PretrainDataset(Dataset):
             num_patches=num_patches,
             num_temporal_length=num_temporal_length,
             patch_size=patch_size,
+            vv_clipped_range=vv_clipped_range,
+            vh_clipped_range=vh_clipped_range,
         )
 
     def __len__(self) -> int:
@@ -60,12 +64,12 @@ if __name__ == "__main__":
 
     from flood_detection_core.config import CLVAEConfig, DataConfig
 
-    data_config = DataConfig.from_yaml("./flood-detection-core/yamls/data.yaml")
+    data_config = DataConfig.from_yaml("./flood-detection-core/yamls/data_sen1flood11.yaml")
     model_config = CLVAEConfig.from_yaml("./flood-detection-core/yamls/model_clvae.yaml")
 
     pretrain_dataset = PretrainDataset(
-        split_csv_path=data_config.splits.pre_flood_split,
-        pretrain_dir=data_config.gee.pretrain_dir,
+        split_csv_path=data_config.csv_files.pre_flood_split,
+        pretrain_dir=data_config.data_dirs.pretrain_cache,
         num_patches=model_config.pretrain.num_patches,
         num_temporal_length=model_config.pretrain.num_temporal_length,
         patch_size=model_config.pretrain.patch_size,
