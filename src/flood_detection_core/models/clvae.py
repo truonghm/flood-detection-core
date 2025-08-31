@@ -138,15 +138,15 @@ class ConvLSTMEncoder(nn.Module):
         self.convlstm = ConvLSTM(input_channels, hidden_channels, kernel_size=3)
 
         # Two residual blocks with 3D convolutions
-        # Reduce channels progressively to match paper's parameter count
+        # Channel plan adjusted: 64 → 32 → 32
         self.res_block1 = ResidualBlock3D(hidden_channels, 32, stride=2)
-        self.res_block2 = ResidualBlock3D(32, 16, stride=2)
+        self.res_block2 = ResidualBlock3D(32, 32, stride=2)
 
         # Global average pooling
         self.global_pool = nn.AdaptiveAvgPool3d(1)
 
         # Bottleneck dense layer (8 channels as per paper)
-        self.bottleneck = nn.Linear(16, 8)
+        self.bottleneck = nn.Linear(32, 8)
 
         # Separate dense layers for μ and σ
         self.fc_mu = nn.Linear(8, latent_dim)
@@ -238,12 +238,15 @@ class ConvLSTMDecoder(nn.Module):
         # Dense layer to expand latent vector to (1, 4, 4); two stride-2 upsamples then a stride-1 refinement
         self.fc_expand = nn.Linear(latent_dim, 16 * 1 * 4 * 4)
 
-        self.conv_transpose1 = nn.ConvTranspose3d(16, 32, kernel_size=3, stride=2, padding=1, output_padding=1)
-        self.bn1 = nn.BatchNorm3d(32)
-        self.merge_conv1 = nn.Conv3d(32 + 16, 32, kernel_size=1)
+        # Increase first upsampling width to 64 to raise parameter count
+        self.conv_transpose1 = nn.ConvTranspose3d(16, 64, kernel_size=3, stride=2, padding=1, output_padding=1)
+        self.bn1 = nn.BatchNorm3d(64)
+        # Merge 64 (deconv) + 32 (skip from ResBlock2) → 64
+        self.merge_conv1 = nn.Conv3d(64 + 32, 64, kernel_size=1)
 
+        # Second upsample now takes 64 channels in and outputs hidden_channels (64)
         self.conv_transpose2 = nn.ConvTranspose3d(
-            32, hidden_channels, kernel_size=3, stride=2, padding=1, output_padding=1
+            64, hidden_channels, kernel_size=3, stride=2, padding=1, output_padding=1
         )
         self.bn2 = nn.BatchNorm3d(hidden_channels)
         self.merge_conv2 = nn.Conv3d(hidden_channels + 32, hidden_channels, kernel_size=1)
