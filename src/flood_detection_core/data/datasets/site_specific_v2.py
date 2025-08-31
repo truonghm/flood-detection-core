@@ -13,7 +13,6 @@ from flood_detection_core.config import AugmentationConfig, CLVAEConfig, DataCon
 from flood_detection_core.data.processing.augmentation import augment_data
 from flood_detection_core.data.processing.imaging import resize_to_target
 from flood_detection_core.data.processing.utils import choose_pre_flood_paths
-from flood_detection_core.data.processing.utils import get_image_size_v2 as get_image_size
 
 
 class SiteSpecificTrainingDataset(Dataset):
@@ -99,9 +98,15 @@ class SiteSpecificTrainingDataset(Dataset):
 
                 try:
                     # Pick a sample sequence to get dimensions
-                    sample_paths = self._pick_sequence_paths(site, tile)
-                    min_h = min(get_image_size(Path(p))[0] for p in sample_paths)
-                    min_w = min(get_image_size(Path(p))[1] for p in sample_paths)
+                    # sample_paths = self._pick_sequence_paths(site, tile)
+                    # min_h = min(get_image_size(Path(p))[0] for p in sample_paths)
+                    # min_w = min(get_image_size(Path(p))[1] for p in sample_paths)
+
+                    # quick fixes, as images are always 512x512 (either originally or resized)
+                    # avoid getting sizes from raw images
+                    # will address this in the future, ignore for now
+                    min_h = 512
+                    min_w = 512
 
                     if min_h < self.patch_size or min_w < self.patch_size:
                         continue

@@ -4,6 +4,7 @@ from typing import Literal
 import numpy as np
 import rasterio
 import torch
+from skimage.exposure import match_histograms
 from torch.utils.data import Dataset
 
 from flood_detection_core.config import CLVAEConfig, DataConfig
@@ -111,23 +112,15 @@ class FloodDetectionDataset(Dataset):
             raw_tile_pairs = [tp for tp in raw_tile_pairs if tp["site"] in sites]
 
         self.tile_pairs: list[dict] = raw_tile_pairs
-        # Precompute per-tile window counts (after cropping to min common H/W and padding)
+        # Assume all inputs are resized to 512x512 by resize_to_target → no cropping needed
         self._tile_window_counts: list[int] = []
-        self._tile_hw: list[tuple[int, int]] = []  # min common H/W per tile before padding
-        for tp in self.tile_pairs:
-            # Compute min common H/W across all pre/post images for this tile
-            heights = []
-            widths = []
-            # Read sizes without loading full arrays (rasterio.open metadata)
-            for p in tp["pre_flood_paths"] + [tp["post_flood_path"]]:
-                with rasterio.open(p) as src:
-                    heights.append(src.height)
-                    widths.append(src.width)
-            min_h, min_w = int(min(heights)), int(min(widths))
-            self._tile_hw.append((min_h, min_w))
+        self._tile_hw: list[tuple[int, int]] = []  # fixed per-tile H/W after resize
+        for _ in self.tile_pairs:
+            H, W = 512, 512
+            self._tile_hw.append((H, W))
 
-            Hp = min_h + 2 * self.pad_size
-            Wp = min_w + 2 * self.pad_size
+            Hp = H + 2 * self.pad_size
+            Wp = W + 2 * self.pad_size
             n_i = 1 + (Hp - self.patch_size) // self.stride
             n_j = 1 + (Wp - self.patch_size) // self.stride
             self._tile_window_counts.append(n_i * n_j)
@@ -197,28 +190,26 @@ class FloodDetectionDataset(Dataset):
             return
 
         tp = self.tile_pairs[tile_idx]
-        min_h, min_w = self._tile_hw[tile_idx]
 
         # Select T pre-flood paths (deterministic or not)
         selected_pre_paths = self._select_preflood_paths([Path(p) for p in tp["pre_flood_paths"]])
 
-        # Read and crop pre-flood images WITHOUT normalization
+        # Read pre-flood images WITHOUT normalization (already resized to 512x512)
         pre_imgs = []
         for p in selected_pre_paths:
             arr = _read_tif_hw2(Path(p))
             if self.pre_flood_vv_clipped_range and self.pre_flood_vh_clipped_range:
                 arr = _normalize(arr, self.pre_flood_vv_clipped_range, self.pre_flood_vh_clipped_range)
-            pre_imgs.append(arr[:min_h, :min_w, :])
+            pre_imgs.append(arr)
         pre_stack = np.stack(pre_imgs, axis=0)  # (T, H, W, 2)
 
-        # Read and crop post-flood image WITH normalization
+        # Read post-flood image WITH normalization (already resized to 512x512)
         post_arr = _read_tif_hw2(Path(tp["post_flood_path"]))
-        post_arr = post_arr[:min_h, :min_w, :]
 
         # only normalize post-flood image because pre-flood images are already normalized in download
         if self.post_flood_vv_clipped_range and self.post_flood_vh_clipped_range:
             post_arr = _normalize(post_arr, self.post_flood_vv_clipped_range, self.post_flood_vh_clipped_range)
-        # post_arr = match_histograms(pre_imgs[0], post_arr)
+        post_arr = match_histograms(post_arr, pre_imgs[0])
         post_stack = post_arr[None, ...]  # (1, H, W, 2)
 
         # Reflect pad both sequences

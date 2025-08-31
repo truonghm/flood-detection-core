@@ -255,7 +255,7 @@ def run_all(
 
     if dataset == "sen1flood11":
         # sites = HandLabeledSen1Flood11Sites
-        sites = ["somalia"]
+        sites = ["bolivia", "mekong"]
     elif dataset == "urban_sar":
         # sites = UrbanSARSites
         sites = ["Houston"]

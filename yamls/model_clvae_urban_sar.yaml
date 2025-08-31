@@ -35,6 +35,7 @@ site_specific:
   positive_pair_ratio: 0.5
   vv_clipped_range: [-20.4, -2.3]
   vh_clipped_range: [-30.8, -7.0]
+  contrastive_margin: 0.3
 
 inference:
   num_temporal_length: 4

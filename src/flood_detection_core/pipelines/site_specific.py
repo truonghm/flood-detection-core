@@ -102,6 +102,7 @@ def site_specific_train(
         beta=kwargs.get("beta", model_config.site_specific.beta),
         max_patches_per_pair=kwargs.get("max_patches_per_pair", model_config.site_specific.max_patches_per_pair),
         positive_pair_ratio=kwargs.get("positive_pair_ratio", model_config.site_specific.positive_pair_ratio),
+        contrastive_margin=kwargs.get("contrastive_margin", model_config.site_specific.contrastive_margin),
     )
 
     if wandb_run:
@@ -227,9 +228,9 @@ def site_specific_train(
                 # Model now supports variable T; dataset provides sequences with
                 # config["num_temporal_length"], so no trimming is needed.
 
-                # Forward both streams with skip-detach to mitigate collapse
-                x1_recon, mu1, logvar1, z1 = model(seq_a, use_skip_connections=True, detach_skips=True)
-                x2_recon, mu2, logvar2, z2 = model(seq_b, use_skip_connections=True, detach_skips=True)
+                # Forward both streams without skip connections to enforce latent usage
+                x1_recon, mu1, logvar1, z1 = model(seq_a, use_skip_connections=True, detach_skips=False)
+                x2_recon, mu2, logvar2, z2 = model(seq_b, use_skip_connections=True, detach_skips=False)
 
                 # Reconstruction and KL for both streams (no internal contrastive)
                 comp1 = model.compute_loss(seq_a, x1_recon, mu1, logvar1, z=None, contrastive_z=None)
@@ -238,18 +239,16 @@ def site_specific_train(
                 recon_loss = 0.5 * (comp1["reconstruction_loss"] + comp2["reconstruction_loss"])
                 kl_loss = 0.5 * (comp1["kl_loss"] + comp2["kl_loss"])
 
-                # Label-aware contrastive on reconstructions (self-supervised pairs)
+                # Label-aware contrastive on latent means (aligns with inference CosD on μ)
                 contrastive_loss = torch.tensor(0.0, device=seq_a.device)
                 if isinstance(batch, list | tuple) and len(batch) == 3:
                     _, _, y = batch
                     y = y.to(seq_a.device)
-                    e1 = torch.sigmoid(x1_recon).reshape(x1_recon.size(0), -1)
-                    e2 = torch.sigmoid(x2_recon).reshape(x2_recon.size(0), -1)
-                    e1 = F.normalize(e1, dim=1)
-                    e2 = F.normalize(e2, dim=1)
-                    cos = torch.sum(e1 * e2, dim=1)
+                    mu1n = F.normalize(mu1, dim=1)
+                    mu2n = F.normalize(mu2, dim=1)
+                    cos = torch.sum(mu1n * mu2n, dim=1)
 
-                    margin = 0.3
+                    margin = config["contrastive_margin"]
                     pos = y == 1
                     neg = y == 0
                     if pos.any():
@@ -301,29 +300,40 @@ def site_specific_train(
             with torch.no_grad():
                 for batch_idx, batch in enumerate(val_loader):
                     if isinstance(batch, list | tuple) and len(batch) == 3:
-                        seq_a, seq_b, _ = batch
+                        seq_a, seq_b, y = batch
                     else:
                         seq_a, seq_b = batch
+                        y = None
 
                     seq_a = seq_a.to(device)
                     seq_b = seq_b.to(device)
 
                     # Model supports variable T; no trimming.
 
-                    x1_recon, mu1, logvar1, z1 = model(seq_a)
-                    x2_recon, mu2, logvar2, z2 = model(seq_b)
+                    x1_recon, mu1, logvar1, z1 = model(seq_a, use_skip_connections=True, detach_skips=False)
+                    x2_recon, mu2, logvar2, z2 = model(seq_b, use_skip_connections=True, detach_skips=False)
 
-                    # Compute combined loss with contrastive on latent representations
-                    combined_loss = model.compute_loss(
-                        x=seq_a, reconstruction=x1_recon, mu=mu1, logvar=logvar1, z=z1, contrastive_z=z2
-                    )
+                    # Compute losses
+                    comp1 = model.compute_loss(x=seq_a, reconstruction=x1_recon, mu=mu1, logvar=logvar1)
+                    comp2 = model.compute_loss(x=seq_b, reconstruction=x2_recon, mu=mu2, logvar=logvar2)
 
-                    # Add the second stream's reconstruction and KL losses
-                    comp2 = model.compute_loss(seq_b, x2_recon, mu2, logvar2, z=None, contrastive_z=None)
+                    recon_loss = 0.5 * (comp1["reconstruction_loss"] + comp2["reconstruction_loss"])
+                    kl_loss = 0.5 * (comp1["kl_loss"] + comp2["kl_loss"])
 
-                    recon_loss = 0.5 * (combined_loss["reconstruction_loss"] + comp2["reconstruction_loss"])
-                    kl_loss = 0.5 * (combined_loss["kl_loss"] + comp2["kl_loss"])
-                    contrastive_loss = combined_loss["contrastive_loss"]
+                    # Validation contrastive on latent means with labels if available
+                    contrastive_loss = torch.tensor(0.0, device=seq_a.device)
+                    if y is not None:
+                        y = y.to(seq_a.device)
+                        mu1n = F.normalize(mu1, dim=1)
+                        mu2n = F.normalize(mu2, dim=1)
+                        cos = torch.sum(mu1n * mu2n, dim=1)
+                        margin = config["contrastive_margin"]
+                        pos = y == 1
+                        neg = y == 0
+                        if pos.any():
+                            contrastive_loss = contrastive_loss + (1.0 - cos[pos]).mean()
+                        if neg.any():
+                            contrastive_loss = contrastive_loss + F.relu(cos[neg] - margin).mean()
 
                     contrastive_weight = 1 - model.alpha - model.beta
                     total = model.alpha * kl_loss + model.beta * recon_loss + contrastive_weight * contrastive_loss
@@ -444,42 +454,63 @@ def site_specific_train(
 
 
 if __name__ == "__main__":
+    from .eval import load_ground_truths, test_thresholds
+    from .predict import generate_distance_maps
     from flood_detection_core.config import CLVAEConfig, DataConfig
 
-    use_wandb = False
     data_config = DataConfig.from_yaml(Path("./flood-detection-core/yamls/data_urban_sar.yaml"))
     model_config = CLVAEConfig.from_yaml("./flood-detection-core/yamls/model_clvae_urban_sar.yaml")
+    import datetime
 
-    pretrained_model_path = "artifacts/pretrain_urban_sar/pretrain_20250825_160251/pretrained_model_1.pth"
+    pretrained_model_path = "artifacts/pretrain_urban_sar/pretrain_20250830_014716/pretrained_model_48.pth"
     site_name = "Houston"
-
+    current_datetime = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    run_name = f"site_specific_{site_name}_{current_datetime}"
     test_kwargs = {
         "max_epochs": 2,
         "batch_size": 128,
         "early_stopping_patience": 2,
         "scheduler_patience": 1,
     }
-    if use_wandb:
-        with wandb.init(
-            project="flood-detection-dl",
-            name=f"clvae-site-specific-{site_name}",
-            tags=["clvae", "site-specific", "urban_sar"],
-        ) as run:
-            model = site_specific_train(
-                data_config,
-                model_config,
-                site_name,
-                wandb_run=run,
-                debug=False,
-                pretrained_model_path=pretrained_model_path,
-                **test_kwargs,
-            )
-    else:
-        model = site_specific_train(
-            data_config,
-            model_config,
-            site_name,
-            debug=False,
-            pretrained_model_path=pretrained_model_path,
-            **test_kwargs,
-        )
+
+    _, best_model_info_path = site_specific_train(
+        data_config,
+        model_config,
+        site_name,
+        run_name=run_name,
+        debug=False,
+        pretrained_model_path=pretrained_model_path,
+        **test_kwargs,
+    )
+    with open(best_model_info_path) as f:
+        best_model_info = json.load(f)
+    model_path = Path(best_model_info["checkpoint_path"])
+
+    print(f"Starting prediction and eval for {site_name}")
+
+    distance_maps = generate_distance_maps(
+        site=site_name,
+        data_config=data_config,
+        model_config=model_config,
+        model_path=model_path,
+    )
+    ground_truths = load_ground_truths(site=site_name, data_config=data_config)
+    distance_maps = {k: v for k, v in distance_maps.items() if k in ground_truths}
+    th_test_df = test_thresholds(
+        thresholds=[
+            0.05,
+            0.07,
+            0.1,
+            0.2,
+            0.3,
+            0.4,
+            0.5,
+            0.7,
+            0.9,
+        ],
+        distance_maps=distance_maps,
+        ground_truths=ground_truths,
+    )
+    print(th_test_df)
+
+    th_test_df.to_csv(model_path.parent / "th_test.csv", index=False)
