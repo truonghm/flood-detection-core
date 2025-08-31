@@ -119,7 +119,7 @@ def pretrain(
         for batch in train_loader:
             x = batch.to(device)
             # Use skip-detach during pretrain to reduce collapse
-            x_recon, mu, logvar, z = model(x, use_skip_connections=True, detach_skips=True)
+            x_recon, mu, logvar, z = model(x, use_skip_connections=True, detach_skips=False)
 
             loss_dict = model.compute_loss(x, x_recon, mu, logvar)
             loss = loss_dict["total_loss"]
@@ -135,7 +135,7 @@ def pretrain(
         with torch.no_grad():
             for batch in val_loader:
                 x = batch.to(device)
-                x_recon, mu, logvar, z = model(x, use_skip_connections=True, detach_skips=True)
+                x_recon, mu, logvar, z = model(x, use_skip_connections=True, detach_skips=False)
 
                 loss_dict = model.compute_loss(x, x_recon, mu, logvar)
                 val_loss += loss_dict["total_loss"].item()

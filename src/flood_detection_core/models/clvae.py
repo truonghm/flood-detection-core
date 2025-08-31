@@ -85,6 +85,7 @@ class ResidualBlock3D(nn.Module):
     def __init__(self, in_channels: int, out_channels: int, stride: int = 1):
         super().__init__()
 
+        # Three-conv residual block; downsample only at the first conv to preserve stability
         self.conv1 = nn.Conv3d(in_channels, out_channels, kernel_size=3, stride=stride, padding=1)
         self.bn1 = nn.BatchNorm3d(out_channels)
         self.conv2 = nn.Conv3d(out_channels, out_channels, kernel_size=3, stride=1, padding=1)
@@ -92,11 +93,13 @@ class ResidualBlock3D(nn.Module):
         self.conv3 = nn.Conv3d(out_channels, out_channels, kernel_size=3, stride=1, padding=1)
         self.bn3 = nn.BatchNorm3d(out_channels)
 
-        # Shortcut connection
+        # Shortcut connection: match the block downsampling (only first conv downsamples)
         self.shortcut = nn.Sequential()
-        if stride != 1 or in_channels != out_channels:
+        effective_stride = stride
+        if effective_stride != 1 or in_channels != out_channels:
             self.shortcut = nn.Sequential(
-                nn.Conv3d(in_channels, out_channels, kernel_size=1, stride=stride), nn.BatchNorm3d(out_channels)
+                nn.Conv3d(in_channels, out_channels, kernel_size=1, stride=effective_stride),
+                nn.BatchNorm3d(out_channels),
             )
 
     def _forward_impl(self, x: torch.Tensor) -> torch.Tensor:
@@ -232,8 +235,7 @@ class ConvLSTMDecoder(nn.Module):
         self.hidden_channels = hidden_channels
         self.output_channels = output_channels
 
-        # Dense layer to expand latent vector
-        # Match encoder's final channel count (16)
+        # Dense layer to expand latent vector to (1, 4, 4); two stride-2 upsamples then a stride-1 refinement
         self.fc_expand = nn.Linear(latent_dim, 16 * 1 * 4 * 4)
 
         self.conv_transpose1 = nn.ConvTranspose3d(16, 32, kernel_size=3, stride=2, padding=1, output_padding=1)
@@ -246,6 +248,7 @@ class ConvLSTMDecoder(nn.Module):
         self.bn2 = nn.BatchNorm3d(hidden_channels)
         self.merge_conv2 = nn.Conv3d(hidden_channels + 32, hidden_channels, kernel_size=1)
 
+        # Final refinement at same resolution (stride=1)
         self.conv_transpose3 = nn.ConvTranspose3d(hidden_channels, output_channels, kernel_size=3, stride=1, padding=1)
         self.bn3 = nn.BatchNorm3d(output_channels)
         self.merge_conv3 = nn.Conv3d(output_channels + hidden_channels, output_channels, kernel_size=1)
@@ -279,7 +282,7 @@ class ConvLSTMDecoder(nn.Module):
         batch_size = z.size(0)
 
         # Expand latent vector
-        out = self.fc_expand(z)  # (batch, 16*16)
+        out = self.fc_expand(z)
         out = F.relu(out)
         out = out.view(batch_size, 16, 1, 4, 4)  # (batch, 16, 1, 4, 4)
 
@@ -291,7 +294,10 @@ class ConvLSTMDecoder(nn.Module):
             skip_feat = encoder_features[2]
             if detach_skips:
                 skip_feat = skip_feat.detach()
-            skip_feat = F.interpolate(skip_feat, size=(out.shape[2], 8, 8), mode="trilinear", align_corners=False)
+            # Dynamically match current decoder feature size
+            skip_feat = F.interpolate(
+                skip_feat, size=(out.shape[2], out.shape[3], out.shape[4]), mode="trilinear", align_corners=False
+            )
             out = torch.cat([out, skip_feat], dim=1)
             out = self.merge_conv1(out)
             out = F.relu(out)
@@ -304,7 +310,9 @@ class ConvLSTMDecoder(nn.Module):
             skip_feat = encoder_features[1]
             if detach_skips:
                 skip_feat = skip_feat.detach()
-            skip_feat = F.interpolate(skip_feat, size=(out.shape[2], 16, 16), mode="trilinear", align_corners=False)
+            skip_feat = F.interpolate(
+                skip_feat, size=(out.shape[2], out.shape[3], out.shape[4]), mode="trilinear", align_corners=False
+            )
             out = torch.cat([out, skip_feat], dim=1)
             out = self.merge_conv2(out)
             out = F.relu(out)
@@ -316,7 +324,9 @@ class ConvLSTMDecoder(nn.Module):
             skip_feat = encoder_features[0]
             if detach_skips:
                 skip_feat = skip_feat.detach()
-            skip_feat = F.interpolate(skip_feat, size=(out.shape[2], 16, 16), mode="trilinear", align_corners=False)
+            skip_feat = F.interpolate(
+                skip_feat, size=(out.shape[2], out.shape[3], out.shape[4]), mode="trilinear", align_corners=False
+            )
             out = torch.cat([out, skip_feat], dim=1)
             out = self.merge_conv3(out)
 

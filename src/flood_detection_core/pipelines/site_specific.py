@@ -239,16 +239,17 @@ def site_specific_train(
                 recon_loss = 0.5 * (comp1["reconstruction_loss"] + comp2["reconstruction_loss"])
                 kl_loss = 0.5 * (comp1["kl_loss"] + comp2["kl_loss"])
 
-                # Label-aware contrastive on latent means (aligns with inference CosD on μ)
+                # Label-aware, margin-free contrast on reconstructions (cosine on sigmoid outputs)
                 contrastive_loss = torch.tensor(0.0, device=seq_a.device)
                 if isinstance(batch, list | tuple) and len(batch) == 3:
                     _, _, y = batch
                     y = y.to(seq_a.device)
-                    mu1n = F.normalize(mu1, dim=1)
-                    mu2n = F.normalize(mu2, dim=1)
-                    cos = torch.sum(mu1n * mu2n, dim=1)
+                    p1 = torch.sigmoid(x1_recon)
+                    p2 = torch.sigmoid(x2_recon)
+                    v1 = F.normalize(p1.reshape(p1.size(0), -1), dim=1)
+                    v2 = F.normalize(p2.reshape(p2.size(0), -1), dim=1)
+                    cos = torch.sum(v1 * v2, dim=1)
 
-                    margin = config["contrastive_margin"]
                     pos = y == 1
                     neg = y == 0
                     if pos.any():
@@ -256,7 +257,7 @@ def site_specific_train(
                     else:
                         pos_loss = torch.tensor(0.0, device=seq_a.device)
                     if neg.any():
-                        neg_loss = F.relu(cos[neg] - margin).mean()
+                        neg_loss = F.relu(cos[neg]).mean()
                     else:
                         neg_loss = torch.tensor(0.0, device=seq_a.device)
                     contrastive_loss = pos_loss + neg_loss
@@ -320,20 +321,21 @@ def site_specific_train(
                     recon_loss = 0.5 * (comp1["reconstruction_loss"] + comp2["reconstruction_loss"])
                     kl_loss = 0.5 * (comp1["kl_loss"] + comp2["kl_loss"])
 
-                    # Validation contrastive on latent means with labels if available
+                    # Validation contrastive on reconstructions (label-aware, margin-free)
                     contrastive_loss = torch.tensor(0.0, device=seq_a.device)
                     if y is not None:
                         y = y.to(seq_a.device)
-                        mu1n = F.normalize(mu1, dim=1)
-                        mu2n = F.normalize(mu2, dim=1)
-                        cos = torch.sum(mu1n * mu2n, dim=1)
-                        margin = config["contrastive_margin"]
+                        p1 = torch.sigmoid(x1_recon)
+                        p2 = torch.sigmoid(x2_recon)
+                        v1 = F.normalize(p1.reshape(p1.size(0), -1), dim=1)
+                        v2 = F.normalize(p2.reshape(p2.size(0), -1), dim=1)
+                        cos = torch.sum(v1 * v2, dim=1)
                         pos = y == 1
                         neg = y == 0
                         if pos.any():
                             contrastive_loss = contrastive_loss + (1.0 - cos[pos]).mean()
                         if neg.any():
-                            contrastive_loss = contrastive_loss + F.relu(cos[neg] - margin).mean()
+                            contrastive_loss = contrastive_loss + F.relu(cos[neg]).mean()
 
                     contrastive_weight = 1 - model.alpha - model.beta
                     total = model.alpha * kl_loss + model.beta * recon_loss + contrastive_weight * contrastive_loss
